@@ -127,6 +127,7 @@ uct_cuda_ipc_post_cuda_async_copy(uct_ep_h tl_ep, uint64_t remote_addr,
     cuda_ipc_event->mapped_addr = mapped_addr;
     cuda_ipc_event->cache       = ep->remote_memh_cache;
     cuda_ipc_event->d_bptr      = (uintptr_t)key->d_bptr;
+    cuda_ipc_event->b_len       = key->b_len;
     ucs_trace("cuMemcpyDtoDAsync issued :%p dst:%p, src:%p  len:%ld",
              cuda_ipc_event, (void *) dst, (void *) src, iov[0].length);
     return UCS_INPROGRESS;

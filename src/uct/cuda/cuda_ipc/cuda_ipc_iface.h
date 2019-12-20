@@ -26,6 +26,7 @@ typedef struct uct_cuda_ipc_event_desc {
     ucs_queue_elem_t  queue;
     void              *cache;
     uintptr_t         d_bptr;
+    size_t            b_len;
 } uct_cuda_ipc_event_desc_t;
 
 
@@ -41,11 +42,13 @@ typedef struct uct_cuda_ipc_iface {
     struct {
         unsigned     max_poll;                /* query attempts w.o success */
         int          enable_cache;            /* enable/disable ipc handle cache */
+        size_t       cache_limit;             /* mapping size limit for ipc cache*/
     } config;
     ucs_status_t     (*map_memhandle)(void *context, uct_cuda_ipc_key_t *key,
                                       void **map_addr);
     ucs_status_t     (*unmap_memhandle)(void *rem_cache, uintptr_t d_bptr,
-                                        void *mapped_addr);
+                                        void *mapped_addr, size_t b_len,
+                                        size_t threshold);
 } uct_cuda_ipc_iface_t;
 
 
@@ -53,6 +56,7 @@ typedef struct uct_cuda_ipc_iface_config {
     uct_iface_config_t      super;
     unsigned                max_poll;
     int                     enable_cache;
+    size_t                  cache_limit;
 } uct_cuda_ipc_iface_config_t;
 
 

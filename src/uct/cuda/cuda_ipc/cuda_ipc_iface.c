@@ -27,6 +27,12 @@ static ucs_config_field_t uct_cuda_ipc_iface_config_table[] = {
      ucs_offsetof(uct_cuda_ipc_iface_config_t, enable_cache),
      UCS_CONFIG_TYPE_BOOL},
 
+    {"CACHE_LIMIT", "32mb",
+     "meppijng size after which caching is disabled",
+     ucs_offsetof(uct_cuda_ipc_iface_config_t, cache_limit),
+     UCS_CONFIG_TYPE_MEMUNITS},
+
+
     {NULL}
 };
 
@@ -211,7 +217,9 @@ uct_cuda_ipc_progress_event_q(uct_cuda_ipc_iface_t *iface,
          */
         status = iface->unmap_memhandle(cuda_ipc_event->cache,
                                         cuda_ipc_event->d_bptr,
-                                        cuda_ipc_event->mapped_addr);
+                                        cuda_ipc_event->mapped_addr,
+                                        cuda_ipc_event->b_len,
+                                        iface->config.cache_limit);
         if (status != UCS_OK) {
             ucs_fatal("failed to unmap addr:%p", cuda_ipc_event->mapped_addr);
         }
@@ -379,10 +387,11 @@ static UCS_CLASS_INIT_FUNC(uct_cuda_ipc_iface_t, uct_md_h md, uct_worker_h worke
     self->device_count        = dev_count;
     self->config.max_poll     = config->max_poll;
     self->config.enable_cache = config->enable_cache;
+    self->config.cache_limit  = config->cache_limit;
 
     self->map_memhandle   = uct_cuda_ipc_cache_map_memhandle;
     if (self->config.enable_cache) {
-        self->unmap_memhandle = ucs_empty_function_return_success;
+        self->unmap_memhandle = uct_cuda_ipc_cache_unmap_memhandle;
     } else {
         self->unmap_memhandle = uct_cuda_ipc_unmap_memhandle;
     }

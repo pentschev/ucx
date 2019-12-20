@@ -102,7 +102,40 @@ static void uct_cuda_ipc_cache_invalidate_regions(uct_cuda_ipc_cache_t *cache,
               cache->name, from, to);
 }
 
-ucs_status_t uct_cuda_ipc_unmap_memhandle(void *rem_cache, uintptr_t d_bptr, void *mapped_addr)
+ucs_status_t uct_cuda_ipc_cache_unmap_memhandle(void *rem_cache, uintptr_t d_bptr,
+                                                void *mapped_addr, size_t b_len,
+                                                size_t threshold)
+{
+    uct_cuda_ipc_cache_t *cache = (uct_cuda_ipc_cache_t *) rem_cache;
+    ucs_status_t status         = UCS_OK;
+    ucs_pgt_region_t *pgt_region;
+    uct_cuda_ipc_cache_region_t *region;
+
+    pthread_rwlock_rdlock(&cache->lock);
+    pgt_region = UCS_PROFILE_CALL(ucs_pgtable_lookup, &cache->pgtable, d_bptr);
+    region = ucs_derived_of(pgt_region, uct_cuda_ipc_cache_region_t);
+
+    region->refcount--;
+    ucs_assert(region->refcount >= 0);
+
+    if (!region->refcount && (b_len > threshold)) {
+        status = ucs_pgtable_remove(&cache->pgtable, &region->super);
+        if (status != UCS_OK) {
+            ucs_error("failed to remove address:%p from cache (%s)",
+                      (void *)region->key.d_bptr, ucs_status_string(status));
+        }
+        ucs_assert(region->mapped_addr == mapped_addr);
+        status = UCT_CUDADRV_FUNC(cuIpcCloseMemHandle((CUdeviceptr) region->mapped_addr));
+        ucs_free(region);
+    }
+
+    pthread_rwlock_unlock(&cache->lock);
+    return status;
+}
+
+ucs_status_t uct_cuda_ipc_unmap_memhandle(void *rem_cache, uintptr_t d_bptr,
+                                          void *mapped_addr, size_t b_len,
+                                          size_t threshold)
 {
     uct_cuda_ipc_cache_t *cache = (uct_cuda_ipc_cache_t *) rem_cache;
     ucs_status_t status         = UCS_OK;
