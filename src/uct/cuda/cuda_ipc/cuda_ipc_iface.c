@@ -387,13 +387,13 @@ static UCS_CLASS_INIT_FUNC(uct_cuda_ipc_iface_t, uct_md_h md, uct_worker_h worke
     self->device_count        = dev_count;
     self->config.max_poll     = config->max_poll;
     self->config.enable_cache = config->enable_cache;
-    self->config.cache_limit  = config->cache_limit;
 
     self->map_memhandle   = uct_cuda_ipc_cache_map_memhandle;
+    self->unmap_memhandle = uct_cuda_ipc_cache_unmap_memhandle;
     if (self->config.enable_cache) {
-        self->unmap_memhandle = uct_cuda_ipc_cache_unmap_memhandle;
+        self->config.cache_limit  = config->cache_limit;
     } else {
-        self->unmap_memhandle = uct_cuda_ipc_unmap_memhandle;
+        self->config.cache_limit  = -1;
     }
 
     status = ucs_mpool_init(&self->event_desc,
