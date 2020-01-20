@@ -118,7 +118,7 @@ ucs_status_t uct_cuda_ipc_cache_unmap_memhandle(void *rem_cache, uintptr_t d_bpt
     region->refcount--;
     ucs_assert(region->refcount >= 0);
 
-    if (!region->refcount && ((int) b_len > (int) threshold)) {
+    if (!region->refcount && ((size_t) b_len > (size_t) threshold)) {
         status = ucs_pgtable_remove(&cache->pgtable, &region->super);
         if (status != UCS_OK) {
             ucs_error("failed to remove address:%p from cache (%s)",
