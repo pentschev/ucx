@@ -447,9 +447,11 @@ protected:
         ASSERT_EQ(cudaSuccess, buffer.synchronize());
 
         mem_attr.field_mask = UCT_MD_MEM_ATTR_V2_FIELD_MEM_TYPE |
+                              UCT_MD_MEM_ATTR_V2_FIELD_SYS_DEV |
                               UCT_MD_MEM_ATTR_V2_FIELD_MEM_FLAGS;
         EXPECT_UCS_OK(uct_md_mem_query_v2(md(), buffer.ptr(), size, &mem_attr));
         EXPECT_EQ(UCS_MEMORY_TYPE_CUDA_MANAGED, mem_attr.mem_type);
+        EXPECT_NE(UCS_SYS_DEVICE_ID_UNKNOWN, mem_attr.sys_dev);
         EXPECT_FALSE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
     }
 #endif

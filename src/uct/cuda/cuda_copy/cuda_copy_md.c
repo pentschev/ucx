@@ -680,11 +680,17 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
                                   ucs_memory_info_t *mem_info,
                                   int *is_async_managed, int *is_host_located)
 {
+#if CUDA_VERSION >= 11020
 #define UCT_CUDA_MEM_QUERY_NUM_ATTRS 5
+#else
+#define UCT_CUDA_MEM_QUERY_NUM_ATTRS 4
+#endif
     CUmemorytype cuda_mem_type = CU_MEMORYTYPE_HOST;
     uint32_t is_managed        = 0;
     CUcontext cuda_mem_ctx     = NULL;
+#if CUDA_VERSION >= 11020
     CUmemoryPool cuda_mempool  = NULL;
+#endif
     CUpointer_attribute attr_type[UCT_CUDA_MEM_QUERY_NUM_ATTRS];
     void *attr_data[UCT_CUDA_MEM_QUERY_NUM_ATTRS];
     CUdevice cuda_device;
@@ -711,8 +717,10 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
         attr_data[2] = &cuda_device;
         attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
         attr_data[3] = &cuda_mem_ctx;
+#if CUDA_VERSION >= 11020
         attr_type[4] = CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE;
         attr_data[4] = &cuda_mempool;
+#endif
 
         status = UCT_CUDADRV_FUNC_LOG_ERR(
                 cuPointerGetAttributes(ucs_static_array_size(attr_data),
@@ -733,11 +741,18 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
              * provided address and length as base address and alloc length
              * respectively */
             mem_info->type = UCS_MEMORY_TYPE_CUDA_MANAGED;
+#if CUDA_VERSION >= 11020
             if (cuda_mempool != NULL) {
                 /* Managed-pool allocations are stream-ordered and cannot be
                  * registered. */
                 *is_async_managed = 1;
+                mem_info->sys_dev = uct_cuda_get_sys_dev(cuda_device);
+                if (mem_info->sys_dev == UCS_SYS_DEVICE_ID_UNKNOWN) {
+                    return UCS_ERR_NO_DEVICE;
+                }
+                goto out_default_range;
             }
+#endif
 
             cu_err = cuMemRangeGetAttribute(
                     (void*)&pref_loc, sizeof(pref_loc),
