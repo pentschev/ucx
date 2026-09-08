@@ -23,7 +23,8 @@ extern "C" {
 class cuda_async_managed_mem_buffer {
 public:
     cuda_async_managed_mem_buffer(cudaMemPool_t pool, size_t size) :
-        m_buffer(nullptr), m_stream(nullptr), m_status(cudaStreamCreate(&m_stream))
+        m_buffer(nullptr), m_stream(nullptr),
+        m_status(cudaStreamCreate(&m_stream))
     {
         if (m_status == cudaSuccess) {
             m_status = cudaMallocFromPoolAsync(&m_buffer, size, pool, m_stream);

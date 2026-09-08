@@ -747,28 +747,21 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
                  * registered. Use the pool device to avoid re-detection when
                  * CPU is the preferred location. */
                 *is_async_managed = 1;
-                if (cuda_device == CU_DEVICE_CPU) {
-                    mem_info->sys_dev = UCS_SYS_DEVICE_ID_UNKNOWN;
-                } else {
-                    mem_info->sys_dev = uct_cuda_get_sys_dev(cuda_device);
-                    if (mem_info->sys_dev == UCS_SYS_DEVICE_ID_UNKNOWN) {
-                        ucs_diag("cu_device %d (for address %p...%p) "
-                                 "unrecognized", cuda_device, address,
-                                 UCS_PTR_BYTE_OFFSET(address, length));
-                    }
-                }
-                goto out_default_range;
-            }
+                pref_loc = cuda_device;
+            } else
 #endif
 
-            cu_err = cuMemRangeGetAttribute(
-                    (void*)&pref_loc, sizeof(pref_loc),
-                    CU_MEM_RANGE_ATTRIBUTE_PREFERRED_LOCATION,
-                    (CUdeviceptr)address, length);
-            if ((cu_err != CUDA_SUCCESS) || (pref_loc == CU_DEVICE_INVALID)) {
-                pref_loc = (md->config.pref_loc == UCT_CUDA_PREF_LOC_CPU) ?
-                                   CU_DEVICE_CPU :
-                                   cuda_device;
+            {
+                cu_err = cuMemRangeGetAttribute(
+                        (void*)&pref_loc, sizeof(pref_loc),
+                        CU_MEM_RANGE_ATTRIBUTE_PREFERRED_LOCATION,
+                        (CUdeviceptr)address, length);
+                if ((cu_err != CUDA_SUCCESS) ||
+                    (pref_loc == CU_DEVICE_INVALID)) {
+                    pref_loc = (md->config.pref_loc == UCT_CUDA_PREF_LOC_CPU) ?
+                                       CU_DEVICE_CPU :
+                                       cuda_device;
+                }
             }
 
             if (pref_loc == CU_DEVICE_CPU) {
@@ -783,15 +776,16 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
             }
 
             goto out_default_range;
+#if CUDA_VERSION >= 11020
+        } else if ((cuda_mempool != NULL) && md->config.cuda_async_managed) {
+#else
         } else if ((cuda_mem_ctx == NULL) && md->config.cuda_async_managed) {
-            /* Currently virtual/stream-ordered CUDA allocations are typed as
+#endif
+            /* Stream-ordered CUDA allocations are typed as
              * `UCS_MEMORY_TYPE_CUDA_MANAGED`. This may be changed using
-             * UCX_CUDA_COPY_ASYNC_MEM_TYPE env var. Ideally checking for
-             * `CU_POINTER_ATTRIBUTE_IS_LEGACY_CUDA_IPC_CAPABLE` would be better
-             * here, but due to a bug in the driver `cudaMalloc` also returns
-             * false in that case. Therefore, checking whether the allocation
-             * was not allocated in a context should also allows us to
-             * identify virtual/stream-ordered CUDA allocations. */
+             * UCX_CUDA_COPY_ASYNC_MEM_TYPE env var. CUDA versions before 11.2
+             * do not provide the memory-pool attribute, so use the missing
+             * context to identify these allocations. */
             mem_info->type    = UCS_MEMORY_TYPE_CUDA_MANAGED;
             *is_async_managed = 1;
         } else {
