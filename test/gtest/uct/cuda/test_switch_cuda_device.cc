@@ -441,6 +441,69 @@ UCS_TEST_P(test_mem_alloc_device, no_current_context_user_mem_registrable,
     EXPECT_EQ(CUDA_SUCCESS, cuMemFree(dptr));
 }
 
+#if CUDART_VERSION >= 13000
+UCS_TEST_P(test_mem_alloc_device, async_managed_mem_pool_not_registrable,
+           "CUDA_COPY_DMABUF=try")
+{
+    constexpr size_t size = 192;
+    cudaMemLocation location = {};
+    cudaStream_t stream      = nullptr;
+    cudaMemPool_t pool       = nullptr;
+    void *buffer             = nullptr;
+    int cuda_device;
+    int concurrent_managed_access;
+    uct_md_mem_attr_v2_t mem_attr = {};
+
+    ASSERT_EQ(cudaSuccess, cudaGetDevice(&cuda_device));
+    ASSERT_EQ(cudaSuccess,
+              cudaDeviceGetAttribute(&concurrent_managed_access,
+                                     cudaDevAttrConcurrentManagedAccess,
+                                     cuda_device));
+    if (!concurrent_managed_access) {
+        UCS_TEST_SKIP_R("device does not support concurrent managed access");
+    }
+
+    location.type = cudaMemLocationTypeDevice;
+    location.id   = cuda_device;
+    ASSERT_EQ(cudaSuccess,
+              cudaMemGetDefaultMemPool(&pool, &location,
+                                       cudaMemAllocationTypeManaged));
+    ASSERT_EQ(cudaSuccess, cudaStreamCreate(&stream));
+
+    cudaError_t cuda_status = cudaMallocFromPoolAsync(&buffer, size, pool,
+                                                      stream);
+    if (cuda_status != cudaSuccess) {
+        EXPECT_EQ(cudaSuccess, cudaStreamDestroy(stream));
+        ASSERT_EQ(cudaSuccess, cuda_status);
+    }
+
+    cuda_status = cudaMemsetAsync(buffer, 0, size, stream);
+    if (cuda_status != cudaSuccess) {
+        EXPECT_EQ(cudaSuccess, cudaFreeAsync(buffer, stream));
+        EXPECT_EQ(cudaSuccess, cudaStreamSynchronize(stream));
+        EXPECT_EQ(cudaSuccess, cudaStreamDestroy(stream));
+        ASSERT_EQ(cudaSuccess, cuda_status);
+    }
+
+    cuda_status = cudaStreamSynchronize(stream);
+    if (cuda_status != cudaSuccess) {
+        EXPECT_EQ(cudaSuccess, cudaFreeAsync(buffer, stream));
+        EXPECT_EQ(cudaSuccess, cudaStreamDestroy(stream));
+        ASSERT_EQ(cudaSuccess, cuda_status);
+    }
+
+    mem_attr.field_mask = UCT_MD_MEM_ATTR_V2_FIELD_MEM_TYPE |
+                          UCT_MD_MEM_ATTR_V2_FIELD_MEM_FLAGS;
+    EXPECT_UCS_OK(uct_md_mem_query_v2(md(), buffer, size, &mem_attr));
+    EXPECT_EQ(UCS_MEMORY_TYPE_CUDA_MANAGED, mem_attr.mem_type);
+    EXPECT_FALSE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
+
+    EXPECT_EQ(cudaSuccess, cudaFreeAsync(buffer, stream));
+    EXPECT_EQ(cudaSuccess, cudaStreamSynchronize(stream));
+    EXPECT_EQ(cudaSuccess, cudaStreamDestroy(stream));
+}
+#endif
+
 UCS_TEST_P(test_mem_alloc_device, no_current_context_vmm_mem_registrable,
            "CUDA_COPY_ASYNC_MEM_TYPE=cuda")
 {

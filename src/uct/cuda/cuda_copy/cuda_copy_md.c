@@ -730,6 +730,9 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
              * provided address and length as base address and alloc length
              * respectively */
             mem_info->type = UCS_MEMORY_TYPE_CUDA_MANAGED;
+            if (cuda_mem_ctx == NULL) {
+                *is_async_managed = 1;
+            }
 
             cu_err = cuMemRangeGetAttribute(
                     (void*)&pref_loc, sizeof(pref_loc),
