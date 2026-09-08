@@ -581,6 +581,12 @@ UCS_TEST_P(test_mem_alloc_device, async_managed_mem_pool_not_registrable,
     test_async_managed_mem_pool_not_registrable();
 }
 
+UCS_TEST_P(test_mem_alloc_device, async_managed_mem_pool_gpu_pref_loc,
+           "CUDA_COPY_DMABUF=try", "CUDA_COPY_PREF_LOC=gpu")
+{
+    test_async_managed_mem_pool_not_registrable();
+}
+
 UCS_TEST_P(test_mem_alloc_device,
            async_managed_mem_pool_not_registrable_cuda_type,
            "CUDA_COPY_DMABUF=try", "CUDA_COPY_ASYNC_MEM_TYPE=cuda")

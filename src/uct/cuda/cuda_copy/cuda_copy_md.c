@@ -746,9 +746,13 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
                 /* Managed-pool allocations are stream-ordered and cannot be
                  * registered. */
                 *is_async_managed = 1;
-                mem_info->sys_dev = uct_cuda_get_sys_dev(cuda_device);
-                if (mem_info->sys_dev == UCS_SYS_DEVICE_ID_UNKNOWN) {
-                    return UCS_ERR_NO_DEVICE;
+                if (cuda_device == CU_DEVICE_CPU) {
+                    mem_info->sys_dev = UCS_SYS_DEVICE_ID_UNKNOWN;
+                } else {
+                    mem_info->sys_dev = uct_cuda_get_sys_dev(cuda_device);
+                    if (mem_info->sys_dev == UCS_SYS_DEVICE_ID_UNKNOWN) {
+                        return UCS_ERR_NO_DEVICE;
+                    }
                 }
                 goto out_default_range;
             }
