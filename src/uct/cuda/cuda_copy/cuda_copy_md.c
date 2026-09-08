@@ -730,7 +730,9 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
              * provided address and length as base address and alloc length
              * respectively */
             mem_info->type = UCS_MEMORY_TYPE_CUDA_MANAGED;
-            if (cuda_mem_ctx == NULL) {
+            if ((cuda_mem_ctx == NULL) && md->config.cuda_async_managed) {
+                /* Managed pool allocations are stream-ordered and do not have
+                 * an owning CUDA context. */
                 *is_async_managed = 1;
             }
 
