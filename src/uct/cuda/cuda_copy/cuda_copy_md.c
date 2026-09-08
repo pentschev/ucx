@@ -680,10 +680,11 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
                                   ucs_memory_info_t *mem_info,
                                   int *is_async_managed, int *is_host_located)
 {
-#define UCT_CUDA_MEM_QUERY_NUM_ATTRS 4
+#define UCT_CUDA_MEM_QUERY_NUM_ATTRS 5
     CUmemorytype cuda_mem_type = CU_MEMORYTYPE_HOST;
     uint32_t is_managed        = 0;
     CUcontext cuda_mem_ctx     = NULL;
+    CUmemoryPool cuda_mempool  = NULL;
     CUpointer_attribute attr_type[UCT_CUDA_MEM_QUERY_NUM_ATTRS];
     void *attr_data[UCT_CUDA_MEM_QUERY_NUM_ATTRS];
     CUdevice cuda_device;
@@ -710,6 +711,8 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
         attr_data[2] = &cuda_device;
         attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
         attr_data[3] = &cuda_mem_ctx;
+        attr_type[4] = CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE;
+        attr_data[4] = &cuda_mempool;
 
         status = UCT_CUDADRV_FUNC_LOG_ERR(
                 cuPointerGetAttributes(ucs_static_array_size(attr_data),
@@ -730,9 +733,9 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
              * provided address and length as base address and alloc length
              * respectively */
             mem_info->type = UCS_MEMORY_TYPE_CUDA_MANAGED;
-            if ((cuda_mem_ctx == NULL) && md->config.cuda_async_managed) {
-                /* Managed pool allocations are stream-ordered and do not have
-                 * an owning CUDA context. */
+            if (cuda_mempool != NULL) {
+                /* Managed-pool allocations are stream-ordered and cannot be
+                 * registered. */
                 *is_async_managed = 1;
             }
 
