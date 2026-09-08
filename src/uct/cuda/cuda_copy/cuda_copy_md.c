@@ -744,14 +744,17 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
 #if CUDA_VERSION >= 11020
             if (cuda_mempool != NULL) {
                 /* Managed-pool allocations are stream-ordered and cannot be
-                 * registered. */
+                 * registered. Use the pool device to avoid re-detection when
+                 * CPU is the preferred location. */
                 *is_async_managed = 1;
                 if (cuda_device == CU_DEVICE_CPU) {
                     mem_info->sys_dev = UCS_SYS_DEVICE_ID_UNKNOWN;
                 } else {
                     mem_info->sys_dev = uct_cuda_get_sys_dev(cuda_device);
                     if (mem_info->sys_dev == UCS_SYS_DEVICE_ID_UNKNOWN) {
-                        return UCS_ERR_NO_DEVICE;
+                        ucs_diag("cu_device %d (for address %p...%p) "
+                                 "unrecognized", cuda_device, address,
+                                 UCS_PTR_BYTE_OFFSET(address, length));
                     }
                 }
                 goto out_default_range;
