@@ -342,6 +342,24 @@ protected:
         EXPECT_TRUE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
     }
 
+    void query_managed_registrable(void *address, size_t size)
+    {
+        CUpointer_attribute attr_type = CU_POINTER_ATTRIBUTE_CONTEXT;
+        uct_md_mem_attr_v2_t mem_attr = {};
+        CUcontext cuda_mem_ctx        = nullptr;
+
+        ASSERT_EQ(CUDA_SUCCESS,
+                  cuPointerGetAttribute(&cuda_mem_ctx, attr_type,
+                                        (CUdeviceptr)address));
+        EXPECT_NE(nullptr, cuda_mem_ctx);
+
+        mem_attr.field_mask = UCT_MD_MEM_ATTR_V2_FIELD_MEM_TYPE |
+                              UCT_MD_MEM_ATTR_V2_FIELD_MEM_FLAGS;
+        EXPECT_UCS_OK(uct_md_mem_query_v2(md(), address, size, &mem_attr));
+        EXPECT_EQ(UCS_MEMORY_TYPE_CUDA_MANAGED, mem_attr.mem_type);
+        EXPECT_TRUE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
+    }
+
 private:
     std::vector<ucs_sys_device_t> m_sys_dev;
 
@@ -441,12 +459,11 @@ UCS_TEST_P(test_mem_alloc_device, no_current_context_user_mem_registrable,
     EXPECT_EQ(CUDA_SUCCESS, cuMemFree(dptr));
 }
 
-UCS_TEST_P(test_mem_alloc_device, managed_mem_registrable,
+UCS_TEST_P(test_mem_alloc_device, user_managed_mem_registrable,
            "CUDA_COPY_PREF_LOC=cpu")
 {
     constexpr size_t size = 4 * UCS_MBYTE;
-    uct_md_mem_attr_v2_t mem_attr = {};
-    void *buffer                  = nullptr;
+    void *buffer = nullptr;
     cudaError_t cuda_status;
 
     cuda_status = cudaMallocManaged(&buffer, size);
@@ -454,13 +471,19 @@ UCS_TEST_P(test_mem_alloc_device, managed_mem_registrable,
         UCS_TEST_SKIP_R("failed to allocate managed memory");
     }
 
-    mem_attr.field_mask = UCT_MD_MEM_ATTR_V2_FIELD_MEM_TYPE |
-                          UCT_MD_MEM_ATTR_V2_FIELD_MEM_FLAGS;
-    EXPECT_UCS_OK(uct_md_mem_query_v2(md(), buffer, size, &mem_attr));
-    EXPECT_EQ(UCS_MEMORY_TYPE_CUDA_MANAGED, mem_attr.mem_type);
-    EXPECT_TRUE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
+    query_managed_registrable(buffer, size);
 
     EXPECT_EQ(cudaSuccess, cudaFree(buffer));
+}
+
+UCS_TEST_P(test_mem_alloc_device, uct_alloc_managed_mem_registrable,
+           "CUDA_COPY_PREF_LOC=cpu")
+{
+    ASSERT_UCS_OK(allocate(UCS_MEMORY_TYPE_CUDA_MANAGED));
+
+    query_managed_registrable(mem.address, mem.length);
+
+    EXPECT_UCS_OK(uct_mem_free(&mem));
 }
 
 #if CUDART_VERSION >= 13000
