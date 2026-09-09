@@ -685,7 +685,7 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
     uint32_t is_managed        = 0;
     CUcontext cuda_mem_ctx     = NULL;
     void *cuda_mempool         = NULL;
-    unsigned num_attrs         = 4;
+    unsigned num_attrs         = 0;
     CUpointer_attribute attr_type[UCT_CUDA_MEM_QUERY_MAX_ATTRS];
     void *attr_data[UCT_CUDA_MEM_QUERY_MAX_ATTRS];
     CUdevice cuda_device;
@@ -704,14 +704,14 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
             return UCS_ERR_INVALID_ADDR;
         }
     } else {
-        attr_type[0] = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
-        attr_data[0] = &cuda_mem_type;
-        attr_type[1] = CU_POINTER_ATTRIBUTE_IS_MANAGED;
-        attr_data[1] = &is_managed;
-        attr_type[2] = CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
-        attr_data[2] = &cuda_device;
-        attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
-        attr_data[3] = &cuda_mem_ctx;
+        attr_type[num_attrs]   = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
+        attr_data[num_attrs++] = &cuda_mem_type;
+        attr_type[num_attrs]   = CU_POINTER_ATTRIBUTE_IS_MANAGED;
+        attr_data[num_attrs++] = &is_managed;
+        attr_type[num_attrs]   = CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
+        attr_data[num_attrs++] = &cuda_device;
+        attr_type[num_attrs]   = CU_POINTER_ATTRIBUTE_CONTEXT;
+        attr_data[num_attrs++] = &cuda_mem_ctx;
 #if HAVE_DECL_CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE
         attr_type[num_attrs] = CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE;
         attr_data[num_attrs] = &cuda_mempool;
