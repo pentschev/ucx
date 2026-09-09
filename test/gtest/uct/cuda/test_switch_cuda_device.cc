@@ -362,7 +362,7 @@ protected:
 
     void test_async_managed_mem_pool_not_registrable()
     {
-        constexpr size_t size = 192;
+        constexpr size_t size        = 192;
         uct_md_mem_attr_v2_t mem_attr = {};
 
         if (!mem_buffer::is_async_supported(UCS_MEMORY_TYPE_CUDA_MANAGED)) {

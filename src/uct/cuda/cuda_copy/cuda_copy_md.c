@@ -713,9 +713,8 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
         attr_type[num_attrs]   = CU_POINTER_ATTRIBUTE_CONTEXT;
         attr_data[num_attrs++] = &cuda_mem_ctx;
 #if HAVE_DECL_CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE
-        attr_type[num_attrs] = CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE;
-        attr_data[num_attrs] = &cuda_mempool;
-        num_attrs++;
+        attr_type[num_attrs]   = CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE;
+        attr_data[num_attrs++] = &cuda_mempool;
 #endif
 
         status = UCT_CUDADRV_FUNC_LOG_ERR(
@@ -738,8 +737,7 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
             mem_info->type = UCS_MEMORY_TYPE_CUDA_MANAGED;
             if (cuda_mempool != NULL) {
                 /* Managed-pool allocations are stream-ordered and cannot be
-                 * registered. Use the pool device to avoid re-detection when
-                 * CPU is the preferred location. */
+                 * registered. Ignore PREF_LOC and use the pool device. */
                 *is_async_managed = 1;
                 pref_loc          = cuda_device;
             } else {
@@ -774,8 +772,10 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
              * `CU_POINTER_ATTRIBUTE_IS_LEGACY_CUDA_IPC_CAPABLE` would be better
              * here, but due to a bug in the driver `cudaMalloc` also returns
              * false in that case. Therefore, checking whether the allocation
-             * was not allocated in a context should also allows us to
-             * identify virtual/stream-ordered CUDA allocations. */
+             * was not allocated in a context should also allow us to
+             * identify virtual/stream-ordered CUDA allocations. Keep this
+             * heuristic for non-managed allocations; managed-pool allocations
+             * are handled above. */
             mem_info->type    = UCS_MEMORY_TYPE_CUDA_MANAGED;
             *is_async_managed = 1;
         } else {
