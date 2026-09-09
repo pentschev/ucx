@@ -589,23 +589,10 @@ void mem_buffer::release(void *ptr, ucs_memory_type_t mem_type, bool async)
             break;
 #if HAVE_CUDA
         case UCS_MEMORY_TYPE_CUDA:
+        case UCS_MEMORY_TYPE_CUDA_MANAGED:
             if (async) {
 #if CUDART_VERSION >= 11020
                 cudaStreamSynchronize(0);
-                CUDA_CALL(cudaFreeAsync(ptr, 0), ": ptr=" << ptr);
-#else
-                UCS_TEST_ABORT("asynchronous release for " +
-                               std::string(ucs_memory_type_names[mem_type]) +
-                               " memory type is not supported");
-#endif
-            } else {
-                CUDA_CALL(cudaFree(ptr), ": ptr=" << ptr);
-            }
-            break;
-        case UCS_MEMORY_TYPE_CUDA_MANAGED:
-            if (async) {
-#if CUDART_VERSION >= 13000
-                CUDA_CALL(cudaStreamSynchronize(0), "");
                 CUDA_CALL(cudaFreeAsync(ptr, 0), ": ptr=" << ptr);
 #else
                 UCS_TEST_ABORT("asynchronous release for " +
