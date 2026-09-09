@@ -19,57 +19,6 @@ extern "C" {
 #include <thread>
 
 
-#if CUDART_VERSION >= 13000
-class cuda_async_managed_mem_buffer {
-public:
-    cuda_async_managed_mem_buffer(cudaMemPool_t pool, size_t size) :
-        m_buffer(nullptr), m_stream(nullptr),
-        m_status(cudaStreamCreate(&m_stream))
-    {
-        if (m_status == cudaSuccess) {
-            m_status = cudaMallocFromPoolAsync(&m_buffer, size, pool, m_stream);
-        }
-    }
-
-    ~cuda_async_managed_mem_buffer()
-    {
-        if (m_buffer != nullptr) {
-            cudaFreeAsync(m_buffer, m_stream);
-        }
-        if (m_stream != nullptr) {
-            cudaStreamSynchronize(m_stream);
-            cudaStreamDestroy(m_stream);
-        }
-    }
-
-    void *ptr() const
-    {
-        return m_buffer;
-    }
-
-    cudaError_t status() const
-    {
-        return m_status;
-    }
-
-    cudaError_t memset(int value, size_t size)
-    {
-        return cudaMemsetAsync(m_buffer, value, size, m_stream);
-    }
-
-    cudaError_t synchronize()
-    {
-        return cudaStreamSynchronize(m_stream);
-    }
-
-private:
-    void        *m_buffer;
-    cudaStream_t m_stream;
-    cudaError_t  m_status;
-};
-#endif
-
-
 class test_switch_cuda_device : public test_md {
 protected:
     template<class T> void detect_mem_type(ucs_memory_type_t mem_type) const;
@@ -411,41 +360,19 @@ protected:
         EXPECT_TRUE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
     }
 
-#if CUDART_VERSION >= 13000
     void test_async_managed_mem_pool_not_registrable()
     {
         constexpr size_t size = 192;
-        cudaMemLocation location = {};
-        cudaMemPool_t pool       = nullptr;
-        int cuda_device;
-        int concurrent_managed_access;
         uct_md_mem_attr_v2_t mem_attr = {};
-        cudaError_t cuda_status;
 
-        ASSERT_EQ(cudaSuccess, cudaGetDevice(&cuda_device));
-        ASSERT_EQ(cudaSuccess,
-                  cudaDeviceGetAttribute(&concurrent_managed_access,
-                                         cudaDevAttrConcurrentManagedAccess,
-                                         cuda_device));
-        if (!concurrent_managed_access) {
-            UCS_TEST_SKIP_R("device does not support concurrent managed access");
+        if (!mem_buffer::is_async_supported(UCS_MEMORY_TYPE_CUDA_MANAGED)) {
+            UCS_TEST_SKIP_R("asynchronous CUDA managed memory is not "
+                            "supported");
         }
 
-        location.type = cudaMemLocationTypeDevice;
-        location.id   = cuda_device;
-        cuda_status = cudaMemGetDefaultMemPool(&pool, &location,
-                                               cudaMemAllocationTypeManaged);
-        if (cuda_status != cudaSuccess) {
-            UCS_TEST_SKIP_R("failed to get default managed memory pool");
-        }
-
-        cuda_async_managed_mem_buffer buffer(pool, size);
-        if (buffer.status() != cudaSuccess) {
-            UCS_TEST_SKIP_R("failed to allocate async managed mempool memory");
-        }
-
-        ASSERT_EQ(cudaSuccess, buffer.memset(0, size));
-        ASSERT_EQ(cudaSuccess, buffer.synchronize());
+        mem_buffer buffer(size, UCS_MEMORY_TYPE_CUDA_MANAGED,
+                          mem_buffer::alloc_mode::ASYNC);
+        buffer.memset(0);
 
         mem_attr.field_mask = UCT_MD_MEM_ATTR_V2_FIELD_MEM_TYPE |
                               UCT_MD_MEM_ATTR_V2_FIELD_SYS_DEV |
@@ -455,7 +382,6 @@ protected:
         EXPECT_NE(UCS_SYS_DEVICE_ID_UNKNOWN, mem_attr.sys_dev);
         EXPECT_FALSE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
     }
-#endif
 
 private:
     std::vector<ucs_sys_device_t> m_sys_dev;
@@ -575,7 +501,6 @@ UCS_TEST_P(test_mem_alloc_device, uct_alloc_managed_mem_registrable,
     EXPECT_UCS_OK(uct_mem_free(&mem));
 }
 
-#if CUDART_VERSION >= 13000
 UCS_TEST_P(test_mem_alloc_device, async_managed_mem_pool_not_registrable,
            "CUDA_COPY_DMABUF=try")
 {
@@ -594,7 +519,6 @@ UCS_TEST_P(test_mem_alloc_device,
 {
     test_async_managed_mem_pool_not_registrable();
 }
-#endif
 
 UCS_TEST_P(test_mem_alloc_device, no_current_context_vmm_mem_registrable,
            "CUDA_COPY_ASYNC_MEM_TYPE=cuda")

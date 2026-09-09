@@ -680,19 +680,14 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
                                   ucs_memory_info_t *mem_info,
                                   int *is_async_managed, int *is_host_located)
 {
-#if CUDA_VERSION >= 11020
-#define UCT_CUDA_MEM_QUERY_NUM_ATTRS 5
-#else
-#define UCT_CUDA_MEM_QUERY_NUM_ATTRS 4
-#endif
+#define UCT_CUDA_MEM_QUERY_MAX_ATTRS 5
     CUmemorytype cuda_mem_type = CU_MEMORYTYPE_HOST;
     uint32_t is_managed        = 0;
     CUcontext cuda_mem_ctx     = NULL;
-#if CUDA_VERSION >= 11020
-    CUmemoryPool cuda_mempool  = NULL;
-#endif
-    CUpointer_attribute attr_type[UCT_CUDA_MEM_QUERY_NUM_ATTRS];
-    void *attr_data[UCT_CUDA_MEM_QUERY_NUM_ATTRS];
+    void *cuda_mempool         = NULL;
+    unsigned num_attrs         = 4;
+    CUpointer_attribute attr_type[UCT_CUDA_MEM_QUERY_MAX_ATTRS];
+    void *attr_data[UCT_CUDA_MEM_QUERY_MAX_ATTRS];
     CUdevice cuda_device;
     int32_t pref_loc;
     int is_vmm;
@@ -717,14 +712,14 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
         attr_data[2] = &cuda_device;
         attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
         attr_data[3] = &cuda_mem_ctx;
-#if CUDA_VERSION >= 11020
-        attr_type[4] = CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE;
-        attr_data[4] = &cuda_mempool;
+#if HAVE_DECL_CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE
+        attr_type[num_attrs] = CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE;
+        attr_data[num_attrs] = &cuda_mempool;
+        num_attrs++;
 #endif
 
         status = UCT_CUDADRV_FUNC_LOG_ERR(
-                cuPointerGetAttributes(ucs_static_array_size(attr_data),
-                                       attr_type, attr_data,
+                cuPointerGetAttributes(num_attrs, attr_type, attr_data,
                                        (CUdeviceptr)address));
         if (status != UCS_OK) {
             /* pointer not recognized */
@@ -741,17 +736,13 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
              * provided address and length as base address and alloc length
              * respectively */
             mem_info->type = UCS_MEMORY_TYPE_CUDA_MANAGED;
-#if CUDA_VERSION >= 11020
             if (cuda_mempool != NULL) {
                 /* Managed-pool allocations are stream-ordered and cannot be
                  * registered. Use the pool device to avoid re-detection when
                  * CPU is the preferred location. */
                 *is_async_managed = 1;
-                pref_loc = cuda_device;
-            } else
-#endif
-
-            {
+                pref_loc          = cuda_device;
+            } else {
                 cu_err = cuMemRangeGetAttribute(
                         (void*)&pref_loc, sizeof(pref_loc),
                         CU_MEM_RANGE_ATTRIBUTE_PREFERRED_LOCATION,
@@ -776,16 +767,15 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
             }
 
             goto out_default_range;
-#if CUDA_VERSION >= 11020
-        } else if ((cuda_mempool != NULL) && md->config.cuda_async_managed) {
-#else
         } else if ((cuda_mem_ctx == NULL) && md->config.cuda_async_managed) {
-#endif
-            /* Stream-ordered CUDA allocations are typed as
+            /* Currently virtual/stream-ordered CUDA allocations are typed as
              * `UCS_MEMORY_TYPE_CUDA_MANAGED`. This may be changed using
-             * UCX_CUDA_COPY_ASYNC_MEM_TYPE env var. CUDA versions before 11.2
-             * do not provide the memory-pool attribute, so use the missing
-             * context to identify these allocations. */
+             * UCX_CUDA_COPY_ASYNC_MEM_TYPE env var. Ideally checking for
+             * `CU_POINTER_ATTRIBUTE_IS_LEGACY_CUDA_IPC_CAPABLE` would be better
+             * here, but due to a bug in the driver `cudaMalloc` also returns
+             * false in that case. Therefore, checking whether the allocation
+             * was not allocated in a context should also allows us to
+             * identify virtual/stream-ordered CUDA allocations. */
             mem_info->type    = UCS_MEMORY_TYPE_CUDA_MANAGED;
             *is_async_managed = 1;
         } else {
