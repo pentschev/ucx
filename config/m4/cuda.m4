@@ -210,8 +210,6 @@ AS_IF([test "x$cuda_checked" != "xyes"],
                              [AC_DEFINE([HAVE_CUMEMRETAINALLOCATIONHANDLE], [1],
                                         [Enable cuMemRetainAllocationHandle() usage])])
                 AC_CHECK_DECLS([CU_MEM_LOCATION_TYPE_HOST],
-                               [], [], [[#include <cuda.h>]])
-                AC_CHECK_DECLS([CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE],
                                [], [], [[#include <cuda.h>]])])
 
          # Check nvml header files

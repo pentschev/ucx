@@ -360,7 +360,7 @@ protected:
         EXPECT_TRUE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
     }
 
-    void test_async_managed_mem_pool_not_registrable()
+    void test_async_managed_mem_pool_registrable()
     {
         constexpr size_t size         = 192;
         uct_md_mem_attr_v2_t mem_attr = {};
@@ -375,12 +375,10 @@ protected:
         buffer.memset(0);
 
         mem_attr.field_mask = UCT_MD_MEM_ATTR_V2_FIELD_MEM_TYPE |
-                              UCT_MD_MEM_ATTR_V2_FIELD_SYS_DEV |
                               UCT_MD_MEM_ATTR_V2_FIELD_MEM_FLAGS;
         EXPECT_UCS_OK(uct_md_mem_query_v2(md(), buffer.ptr(), size, &mem_attr));
         EXPECT_EQ(UCS_MEMORY_TYPE_CUDA_MANAGED, mem_attr.mem_type);
-        EXPECT_NE(UCS_SYS_DEVICE_ID_UNKNOWN, mem_attr.sys_dev);
-        EXPECT_FALSE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
+        EXPECT_TRUE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
     }
 
 private:
@@ -501,23 +499,23 @@ UCS_TEST_P(test_mem_alloc_device, uct_alloc_managed_mem_registrable,
     EXPECT_UCS_OK(uct_mem_free(&mem));
 }
 
-UCS_TEST_P(test_mem_alloc_device, async_managed_mem_pool_not_registrable,
+UCS_TEST_P(test_mem_alloc_device, async_managed_mem_pool_registrable,
            "CUDA_COPY_DMABUF=try")
 {
-    test_async_managed_mem_pool_not_registrable();
+    test_async_managed_mem_pool_registrable();
 }
 
 UCS_TEST_P(test_mem_alloc_device, async_managed_mem_pool_gpu_pref_loc,
            "CUDA_COPY_DMABUF=try", "CUDA_COPY_PREF_LOC=gpu")
 {
-    test_async_managed_mem_pool_not_registrable();
+    test_async_managed_mem_pool_registrable();
 }
 
 UCS_TEST_P(test_mem_alloc_device,
-           async_managed_mem_pool_not_registrable_cuda_type,
+           async_managed_mem_pool_registrable_cuda_type,
            "CUDA_COPY_DMABUF=try", "CUDA_COPY_ASYNC_MEM_TYPE=cuda")
 {
-    test_async_managed_mem_pool_not_registrable();
+    test_async_managed_mem_pool_registrable();
 }
 
 UCS_TEST_P(test_mem_alloc_device, no_current_context_vmm_mem_registrable,

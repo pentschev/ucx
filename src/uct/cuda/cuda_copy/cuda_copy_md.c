@@ -680,14 +680,12 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
                                   ucs_memory_info_t *mem_info,
                                   int *is_async_managed, int *is_host_located)
 {
-#define UCT_CUDA_MEM_QUERY_MAX_ATTRS 5
+#define UCT_CUDA_MEM_QUERY_NUM_ATTRS 4
     CUmemorytype cuda_mem_type = CU_MEMORYTYPE_HOST;
     uint32_t is_managed        = 0;
     CUcontext cuda_mem_ctx     = NULL;
-    void *cuda_mempool         = NULL;
-    unsigned num_attrs         = 0;
-    CUpointer_attribute attr_type[UCT_CUDA_MEM_QUERY_MAX_ATTRS];
-    void *attr_data[UCT_CUDA_MEM_QUERY_MAX_ATTRS];
+    CUpointer_attribute attr_type[UCT_CUDA_MEM_QUERY_NUM_ATTRS];
+    void *attr_data[UCT_CUDA_MEM_QUERY_NUM_ATTRS];
     CUdevice cuda_device;
     int32_t pref_loc;
     int is_vmm;
@@ -704,21 +702,18 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
             return UCS_ERR_INVALID_ADDR;
         }
     } else {
-        attr_type[num_attrs]   = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
-        attr_data[num_attrs++] = &cuda_mem_type;
-        attr_type[num_attrs]   = CU_POINTER_ATTRIBUTE_IS_MANAGED;
-        attr_data[num_attrs++] = &is_managed;
-        attr_type[num_attrs]   = CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
-        attr_data[num_attrs++] = &cuda_device;
-        attr_type[num_attrs]   = CU_POINTER_ATTRIBUTE_CONTEXT;
-        attr_data[num_attrs++] = &cuda_mem_ctx;
-#if HAVE_DECL_CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE
-        attr_type[num_attrs]   = CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE;
-        attr_data[num_attrs++] = &cuda_mempool;
-#endif
+        attr_type[0] = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
+        attr_data[0] = &cuda_mem_type;
+        attr_type[1] = CU_POINTER_ATTRIBUTE_IS_MANAGED;
+        attr_data[1] = &is_managed;
+        attr_type[2] = CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
+        attr_data[2] = &cuda_device;
+        attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
+        attr_data[3] = &cuda_mem_ctx;
 
         status = UCT_CUDADRV_FUNC_LOG_ERR(
-                cuPointerGetAttributes(num_attrs, attr_type, attr_data,
+                cuPointerGetAttributes(ucs_static_array_size(attr_data),
+                                       attr_type, attr_data,
                                        (CUdeviceptr)address));
         if (status != UCS_OK) {
             /* pointer not recognized */
@@ -735,22 +730,14 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
              * provided address and length as base address and alloc length
              * respectively */
             mem_info->type = UCS_MEMORY_TYPE_CUDA_MANAGED;
-            if (cuda_mempool != NULL) {
-                /* Managed-pool allocations are stream-ordered and cannot be
-                 * registered. Ignore PREF_LOC and use the pool device. */
-                *is_async_managed = 1;
-                pref_loc          = cuda_device;
-            } else {
-                cu_err = cuMemRangeGetAttribute(
-                        (void*)&pref_loc, sizeof(pref_loc),
-                        CU_MEM_RANGE_ATTRIBUTE_PREFERRED_LOCATION,
-                        (CUdeviceptr)address, length);
-                if ((cu_err != CUDA_SUCCESS) ||
-                    (pref_loc == CU_DEVICE_INVALID)) {
-                    pref_loc = (md->config.pref_loc == UCT_CUDA_PREF_LOC_CPU) ?
-                                       CU_DEVICE_CPU :
-                                       cuda_device;
-                }
+            cu_err = cuMemRangeGetAttribute(
+                    (void*)&pref_loc, sizeof(pref_loc),
+                    CU_MEM_RANGE_ATTRIBUTE_PREFERRED_LOCATION,
+                    (CUdeviceptr)address, length);
+            if ((cu_err != CUDA_SUCCESS) || (pref_loc == CU_DEVICE_INVALID)) {
+                pref_loc = (md->config.pref_loc == UCT_CUDA_PREF_LOC_CPU) ?
+                                   CU_DEVICE_CPU :
+                                   cuda_device;
             }
 
             if (pref_loc == CU_DEVICE_CPU) {
@@ -773,9 +760,7 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
              * here, but due to a bug in the driver `cudaMalloc` also returns
              * false in that case. Therefore, checking whether the allocation
              * was not allocated in a context should also allow us to
-             * identify virtual/stream-ordered CUDA allocations. Keep this
-             * heuristic for non-managed allocations; managed-pool allocations
-             * are handled above. */
+             * identify virtual/stream-ordered CUDA allocations. */
             mem_info->type    = UCS_MEMORY_TYPE_CUDA_MANAGED;
             *is_async_managed = 1;
         } else {
@@ -895,6 +880,11 @@ uct_cuda_copy_md_detect_mem_flags(uct_cuda_copy_md_t *md,
 
     if (is_async_managed) {
         return 0;
+    }
+
+    /* Managed memory is registered through ODP and is not dmabuf-exportable. */
+    if (mem_info->type == UCS_MEMORY_TYPE_CUDA_MANAGED) {
+        return UCS_MEM_FLAG_REGISTRABLE;
     }
 
     /* Host-located CUDA VMM is registerable even if dmabuf export fails. */
