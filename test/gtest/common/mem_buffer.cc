@@ -67,8 +67,13 @@ mem_buffer_cuda_get_default_managed_pool(cudaMemPool_t *pool_p)
 
     location.type = cudaMemLocationTypeDevice;
     location.id   = device;
-    return cudaMemGetDefaultMemPool(pool_p, &location,
-                                    cudaMemAllocationTypeManaged);
+    cuda_status   = cudaMemGetDefaultMemPool(pool_p, &location,
+                                             cudaMemAllocationTypeManaged);
+    if (cuda_status != cudaSuccess) {
+        (void)cudaGetLastError(); /* do not leak the error to other tests */
+    }
+
+    return cuda_status;
 }
 #endif
 
