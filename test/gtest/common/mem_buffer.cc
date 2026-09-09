@@ -52,6 +52,26 @@
 
 #endif
 
+#if HAVE_CUDA && CUDART_VERSION >= 13000
+static cudaError_t
+mem_buffer_cuda_get_default_managed_pool(cudaMemPool_t *pool_p)
+{
+    cudaMemLocation location = {};
+    int device;
+    cudaError_t cuda_status;
+
+    cuda_status = cudaGetDevice(&device);
+    if (cuda_status != cudaSuccess) {
+        return cuda_status;
+    }
+
+    location.type = cudaMemLocationTypeDevice;
+    location.id   = device;
+    return cudaMemGetDefaultMemPool(pool_p, &location,
+                                    cudaMemAllocationTypeManaged);
+}
+#endif
+
 #if HAVE_ROCM
 #include <hip_runtime.h>
 #include <hip_version.h>
@@ -475,16 +495,9 @@ void *mem_buffer::allocate(size_t size, ucs_memory_type_t mem_type, bool async)
     case UCS_MEMORY_TYPE_CUDA_MANAGED:
         if (async) {
 #if CUDART_VERSION >= 13000
-            cudaMemLocation location = {};
             cudaMemPool_t pool;
-            int device;
 
-            CUDA_CALL(cudaGetDevice(&device), "");
-            location.type = cudaMemLocationTypeDevice;
-            location.id   = device;
-            CUDA_CALL(cudaMemGetDefaultMemPool(&pool, &location,
-                                               cudaMemAllocationTypeManaged),
-                      "");
+            CUDA_CALL(mem_buffer_cuda_get_default_managed_pool(&pool), "");
             CUDA_CALL(cudaMallocFromPoolAsync(&ptr, size, pool, 0),
                       ": size=" << size);
             CUDA_CALL(cudaStreamSynchronize(0), "");
@@ -891,19 +904,9 @@ bool mem_buffer::is_async_supported(ucs_memory_type_t mem_type)
 
 #if CUDART_VERSION >= 13000
     if (mem_type == UCS_MEMORY_TYPE_CUDA_MANAGED) {
-        cudaMemLocation location = {};
         cudaMemPool_t pool;
-        int device;
 
-        if (cudaGetDevice(&device) != cudaSuccess) {
-            return false;
-        }
-
-        location.type = cudaMemLocationTypeDevice;
-        location.id   = device;
-        return cudaMemGetDefaultMemPool(&pool, &location,
-                                        cudaMemAllocationTypeManaged) ==
-               cudaSuccess;
+        return mem_buffer_cuda_get_default_managed_pool(&pool) == cudaSuccess;
     }
 #endif
 #endif
