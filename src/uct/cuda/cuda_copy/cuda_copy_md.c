@@ -730,6 +730,7 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
              * provided address and length as base address and alloc length
              * respectively */
             mem_info->type = UCS_MEMORY_TYPE_CUDA_MANAGED;
+
             cu_err = cuMemRangeGetAttribute(
                     (void*)&pref_loc, sizeof(pref_loc),
                     CU_MEM_RANGE_ATTRIBUTE_PREFERRED_LOCATION,
@@ -759,7 +760,7 @@ uct_cuda_copy_md_query_attributes(const uct_cuda_copy_md_t *md,
              * `CU_POINTER_ATTRIBUTE_IS_LEGACY_CUDA_IPC_CAPABLE` would be better
              * here, but due to a bug in the driver `cudaMalloc` also returns
              * false in that case. Therefore, checking whether the allocation
-             * was not allocated in a context should also allow us to
+             * was not allocated in a context should also allows us to
              * identify virtual/stream-ordered CUDA allocations. */
             mem_info->type    = UCS_MEMORY_TYPE_CUDA_MANAGED;
             *is_async_managed = 1;
@@ -988,6 +989,7 @@ ucs_status_t uct_cuda_copy_md_mem_query(uct_md_h tl_md, const void *address,
     CUdevice avail_cuda_device = CU_DEVICE_INVALID;
     ucs_memory_info_t cached_mem_info;
     ucs_memory_info_t addr_mem_info;
+    ucs_memory_info_t detected_mem_info = {};
     ucs_status_t cache_status;
     ucs_status_t status;
 
@@ -1013,8 +1015,10 @@ ucs_status_t uct_cuda_copy_md_mem_query(uct_md_h tl_md, const void *address,
             return status;
         }
 
-        /* CUDA reports device symbols as device memory, so preserve the type
-         * explicitly provided by the UCM allocation event. */
+        /* Preserve the driver-reported type for flags. CUDA reports device
+         * symbols as device memory, so use the UCM event type for callers. */
+        detected_mem_info = addr_mem_info;
+
         if ((cache_status == UCS_OK) &&
             (cached_mem_info.type == UCS_MEMORY_TYPE_CUDA_MANAGED)) {
             addr_mem_info.type = cached_mem_info.type;
@@ -1068,7 +1072,7 @@ ucs_status_t uct_cuda_copy_md_mem_query(uct_md_h tl_md, const void *address,
 
     if (address != NULL) {
         addr_mem_info.mem_flags = uct_cuda_copy_md_detect_mem_flags(
-                md, &addr_mem_info, is_async_managed, is_host_located,
+                md, &detected_mem_info, is_async_managed, is_host_located,
                 dmabuf_queried ? &dmabuf : NULL);
         ucs_memtype_cache_update(addr_mem_info.base_address,
                                  addr_mem_info.alloc_length, addr_mem_info.type,
