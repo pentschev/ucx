@@ -342,16 +342,20 @@ protected:
         EXPECT_TRUE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
     }
 
-    void query_managed_registrable(void *address, size_t size)
+    void check_managed_memory_context(void *address)
     {
         CUpointer_attribute attr_type = CU_POINTER_ATTRIBUTE_CONTEXT;
-        uct_md_mem_attr_v2_t mem_attr = {};
         CUcontext cuda_mem_ctx        = nullptr;
 
         ASSERT_EQ(CUDA_SUCCESS,
                   cuPointerGetAttribute(&cuda_mem_ctx, attr_type,
                                         (CUdeviceptr)address));
         EXPECT_NE(nullptr, cuda_mem_ctx);
+    }
+
+    void query_managed_registrable(void *address, size_t size)
+    {
+        uct_md_mem_attr_v2_t mem_attr = {};
 
         mem_attr.field_mask = UCT_MD_MEM_ATTR_V2_FIELD_MEM_TYPE |
                               UCT_MD_MEM_ATTR_V2_FIELD_MEM_FLAGS;
@@ -363,7 +367,6 @@ protected:
     void test_async_managed_mem_pool_registrable()
     {
         constexpr size_t size         = 192;
-        uct_md_mem_attr_v2_t mem_attr = {};
 
         if (!mem_buffer::is_async_supported(UCS_MEMORY_TYPE_CUDA_MANAGED)) {
             UCS_TEST_SKIP_R("asynchronous CUDA managed memory is not "
@@ -374,11 +377,7 @@ protected:
                           mem_buffer::alloc_mode::ASYNC);
         buffer.memset(0);
 
-        mem_attr.field_mask = UCT_MD_MEM_ATTR_V2_FIELD_MEM_TYPE |
-                              UCT_MD_MEM_ATTR_V2_FIELD_MEM_FLAGS;
-        EXPECT_UCS_OK(uct_md_mem_query_v2(md(), buffer.ptr(), size, &mem_attr));
-        EXPECT_EQ(UCS_MEMORY_TYPE_CUDA_MANAGED, mem_attr.mem_type);
-        EXPECT_TRUE(mem_attr.mem_flags & UCS_MEM_FLAG_REGISTRABLE);
+        query_managed_registrable(buffer.ptr(), size);
     }
 
 private:
@@ -486,6 +485,7 @@ UCS_TEST_P(test_mem_alloc_device, user_managed_mem_registrable,
     constexpr size_t size = 4 * UCS_MBYTE;
     mem_buffer buffer(size, UCS_MEMORY_TYPE_CUDA_MANAGED);
 
+    check_managed_memory_context(buffer.ptr());
     query_managed_registrable(buffer.ptr(), size);
 }
 
@@ -494,6 +494,7 @@ UCS_TEST_P(test_mem_alloc_device, uct_alloc_managed_mem_registrable,
 {
     ASSERT_UCS_OK(allocate(UCS_MEMORY_TYPE_CUDA_MANAGED));
 
+    check_managed_memory_context(mem.address);
     query_managed_registrable(mem.address, mem.length);
 
     EXPECT_UCS_OK(uct_mem_free(&mem));

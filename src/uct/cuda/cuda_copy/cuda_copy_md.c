@@ -929,7 +929,7 @@ uct_cuda_copy_md_is_registrable(uct_cuda_copy_md_t *md,
 
     /* Managed memory is registered through ODP and is not dmabuf-exportable. */
     if (mem_info->type == UCS_MEMORY_TYPE_CUDA_MANAGED) {
-        return UCS_MEM_FLAG_REGISTRABLE;
+        return 1;
     }
 
     /* Host-located CUDA VMM is registerable even if dmabuf export fails. */
@@ -987,9 +987,9 @@ ucs_status_t uct_cuda_copy_md_mem_query(uct_md_h tl_md, const void *address,
     int is_host_located        = 0;
     CUdevice cur_cuda_device   = CU_DEVICE_INVALID;
     CUdevice avail_cuda_device = CU_DEVICE_INVALID;
+    ucs_memory_info_t detected_mem_info = {};
     ucs_memory_info_t cached_mem_info;
     ucs_memory_info_t addr_mem_info;
-    ucs_memory_info_t detected_mem_info = {};
     ucs_status_t cache_status;
     ucs_status_t status;
 
