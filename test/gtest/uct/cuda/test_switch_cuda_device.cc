@@ -366,7 +366,7 @@ protected:
 
     void test_async_managed_mem_pool_registrable()
     {
-        constexpr size_t size         = 192;
+        constexpr size_t size = 192;
 
         if (!mem_buffer::is_async_supported(UCS_MEMORY_TYPE_CUDA_MANAGED)) {
             UCS_TEST_SKIP_R("asynchronous CUDA managed memory is not "
@@ -480,7 +480,7 @@ UCS_TEST_P(test_mem_alloc_device, no_current_context_user_mem_registrable,
 }
 
 UCS_TEST_P(test_mem_alloc_device, user_managed_mem_registrable,
-           "CUDA_COPY_PREF_LOC=cpu")
+           "CUDA_COPY_PREF_LOC=gpu")
 {
     constexpr size_t size = 4 * UCS_MBYTE;
     mem_buffer buffer(size, UCS_MEMORY_TYPE_CUDA_MANAGED);
@@ -490,7 +490,7 @@ UCS_TEST_P(test_mem_alloc_device, user_managed_mem_registrable,
 }
 
 UCS_TEST_P(test_mem_alloc_device, uct_alloc_managed_mem_registrable,
-           "CUDA_COPY_PREF_LOC=cpu")
+           "CUDA_COPY_PREF_LOC=gpu")
 {
     ASSERT_UCS_OK(allocate(UCS_MEMORY_TYPE_CUDA_MANAGED));
 

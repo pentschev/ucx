@@ -988,8 +988,8 @@ ucs_status_t uct_cuda_copy_md_mem_query(uct_md_h tl_md, const void *address,
     CUdevice cur_cuda_device   = CU_DEVICE_INVALID;
     CUdevice avail_cuda_device = CU_DEVICE_INVALID;
     ucs_memory_info_t detected_mem_info = {};
+    ucs_memory_info_t addr_mem_info     = {};
     ucs_memory_info_t cached_mem_info;
-    ucs_memory_info_t addr_mem_info;
     ucs_status_t cache_status;
     ucs_status_t status;
 

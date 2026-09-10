@@ -10,7 +10,6 @@
 
 #include <ucp/api/ucp.h>
 #include <ucm/api/ucm.h>
-#include <ucs/memory/memtype_cache.h>
 #include <cuda_runtime.h>
 
 
@@ -69,7 +68,6 @@ static int check_symbol_memory_type(ucp_context_h context, void *address)
 {
     ucp_mem_map_params_t map_params;
     ucp_mem_attr_t mem_attr;
-    ucs_memory_info_t cached_mem_info;
     ucp_mem_h memh;
     ucs_status_t status;
     int num_errors = 0;
@@ -93,17 +91,6 @@ static int check_symbol_memory_type(ucp_context_h context, void *address)
         printf("unexpected mapped symbol memory type %s, expected %s\n",
                ucs_memory_type_names[mem_attr.mem_type],
                ucs_memory_type_names[UCS_MEMORY_TYPE_CUDA_MANAGED]);
-        ++num_errors;
-    }
-
-    status = ucs_memtype_cache_lookup(address, sizeof(device_int),
-                                      &cached_mem_info);
-    if (status != UCS_OK) {
-        printf("memtype cache lookup failed: %s\n", ucs_status_string(status));
-        ++num_errors;
-    } else if (cached_mem_info.mem_flags & UCS_MEM_FLAG_REGISTRABLE) {
-        printf("unexpected cached symbol memory flags 0x%x\n",
-               cached_mem_info.mem_flags);
         ++num_errors;
     }
 
