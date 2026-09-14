@@ -519,9 +519,12 @@ ucp_proto_rndv_rtr_mtype_probe(const ucp_proto_init_params_t *init_params)
                  UCS_MEMORY_TYPE_HOST) &&
                 (init_params->rkey_config_key->mem_type ==
                  UCS_MEMORY_TYPE_HOST);
-        max_elems = ucp_proto_rndv_frag_max_elems(context, frag_mem_type);
-        if (reserve_put_frag && (max_elems <= 1)) {
-            continue;
+        max_elems = UINT_MAX;
+        if (reserve_put_frag) {
+            max_elems = ucp_proto_rndv_frag_max_elems(context, frag_mem_type);
+            if (max_elems <= 1) {
+                continue;
+            }
         }
 
         status = ucp_proto_rndv_mtype_init(init_params, frag_mem_type,

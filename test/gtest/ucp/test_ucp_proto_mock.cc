@@ -1916,8 +1916,11 @@ UCS_TEST_P(test_ucp_proto_mock_cuda_model_offload,
                       UCS_MEMORY_TYPE_CUDA, "tag/rndv/offload_sw"));
 }
 
-UCS_TEST_P(test_ucp_proto_mock_cuda_model, host_cuda_force_disabled_by_default,
-           "RNDV_THRESH=0", "RNDV_FRAG_MEM_TYPES=cuda")
+UCS_TEST_P(test_ucp_proto_mock_cuda_model,
+           host_cuda_force_disabled_low_frag_cap_no_probe_warning,
+           "RNDV_THRESH=0", "RNDV_FRAG_MEM_TYPES=cuda",
+           "RNDV_FRAG_SIZE=cuda:64K", "RNDV_FRAG_ALLOC_COUNT=cuda:2",
+           "RNDV_FRAG_WORKER_MAX_MEM=64K")
 {
     const std::string info = tag_rndv_protocol_info(UCS_MEMORY_TYPE_HOST,
                                                     UCS_MEMORY_TYPE_HOST);

@@ -1145,6 +1145,25 @@ ucs_mpool_ops_t ucp_frag_mpool_ops = {
     .obj_cleanup   = (ucs_mpool_obj_cleanup_func_t)ucs_empty_function
 };
 
+static void
+ucp_rndv_mpool_warn_max_elems_clamp(ucp_context_h context,
+                                    ucs_memory_type_t mem_type)
+{
+    const size_t max_mem   = context->config.ext.rndv_frag_worker_max_mem;
+    const size_t frag_size = context->config.ext.rndv_frag_size[mem_type];
+    const size_t num_frags = context->config.ext.rndv_num_frags[mem_type];
+
+    if ((max_mem != UCS_MEMUNITS_INF) &&
+        (max_mem != UCS_MEMUNITS_AUTO) &&
+        ((max_mem / frag_size) < num_frags)) {
+        ucs_warn("RNDV_FRAG_WORKER_MAX_MEM (%zu) is too low for %s "
+                 "(frag_size=%zu, frags_per_alloc=%zu), using minimum %zu "
+                 "frags",
+                 max_mem, ucs_memory_type_names[mem_type], frag_size,
+                 num_frags, num_frags);
+    }
+}
+
 ucs_status_t
 ucp_rndv_mpool_get(ucp_worker_h worker, ucs_memory_type_t mem_type,
                    ucs_sys_device_t sys_dev, ucp_mem_desc_t **mdesc_p)
@@ -1198,6 +1217,10 @@ ucp_rndv_mpool_get(ucp_worker_h worker, ucs_memory_type_t mem_type,
         }
 
         goto err;
+    }
+
+    if (worker->context->config.ext.proto_enable) {
+        ucp_rndv_mpool_warn_max_elems_clamp(worker->context, key.mem_type);
     }
 
     mpriv                       = ucs_mpool_priv(mpool);
