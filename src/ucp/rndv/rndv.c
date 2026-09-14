@@ -1145,25 +1145,6 @@ ucs_mpool_ops_t ucp_frag_mpool_ops = {
     .obj_cleanup   = (ucs_mpool_obj_cleanup_func_t)ucs_empty_function
 };
 
-static void
-ucp_rndv_mpool_warn_max_elems_clamp(ucp_context_h context,
-                                    ucs_memory_type_t mem_type)
-{
-    const size_t max_mem   = context->config.ext.rndv_frag_worker_max_mem;
-    const size_t frag_size = context->config.ext.rndv_frag_size[mem_type];
-    const size_t num_frags = context->config.ext.rndv_num_frags[mem_type];
-
-    if ((max_mem != UCS_MEMUNITS_INF) &&
-        (max_mem != UCS_MEMUNITS_AUTO) &&
-        ((max_mem / frag_size) < num_frags)) {
-        ucs_warn("RNDV_FRAG_WORKER_MAX_MEM (%zu) is too low for %s "
-                 "(frag_size=%zu, frags_per_alloc=%zu), using minimum %zu "
-                 "frags",
-                 max_mem, ucs_memory_type_names[mem_type], frag_size,
-                 num_frags, num_frags);
-    }
-}
-
 ucs_status_t
 ucp_rndv_mpool_get(ucp_worker_h worker, ucs_memory_type_t mem_type,
                    ucs_sys_device_t sys_dev, ucp_mem_desc_t **mdesc_p)
@@ -1172,6 +1153,7 @@ ucp_rndv_mpool_get(ucp_worker_h worker, ucs_memory_type_t mem_type,
     ucp_mem_desc_t *mdesc;
     ucp_worker_mpool_key_t key;
     ucs_status_t status;
+    unsigned max_elems;
     unsigned num_frags;
     ucs_mpool_t *mpool;
     khiter_t khiter;
@@ -1195,18 +1177,23 @@ ucp_rndv_mpool_get(ucp_worker_h worker, ucs_memory_type_t mem_type,
 
     ucs_assert_always(khret != UCS_KH_PUT_KEY_PRESENT);
 
-    mpool     = &kh_value(&worker->mpool_hash, khiter);
-    num_frags = worker->context->config.ext.rndv_num_frags[key.mem_type];
+    mpool      = &kh_value(&worker->mpool_hash, khiter);
+    num_frags  = worker->context->config.ext.rndv_num_frags[key.mem_type];
+    max_elems  = worker->context->config.ext.proto_enable ?
+                         ucp_proto_rndv_frag_max_elems(worker->context,
+                                                       key.mem_type) :
+                         UINT_MAX;
+    if (max_elems == 0) {
+        kh_del(ucp_worker_mpool_hash, &worker->mpool_hash, khiter);
+        return UCS_ERR_NO_RESOURCE;
+    }
 
     ucs_mpool_params_reset(&mp_params);
     mp_params.priv_size       = sizeof(ucp_rndv_mpool_priv_t);
     mp_params.elem_size       = sizeof(ucp_mem_desc_t);
     mp_params.alignment       = 1;
-    mp_params.elems_per_chunk = num_frags;
-    mp_params.max_elems       = worker->context->config.ext.proto_enable ?
-                                    ucp_proto_rndv_frag_max_elems(
-                                            worker->context, key.mem_type) :
-                                    UINT_MAX;
+    mp_params.elems_per_chunk = ucs_min(num_frags, max_elems);
+    mp_params.max_elems       = max_elems;
     mp_params.ops             = &ucp_frag_mpool_ops;
     mp_params.name            = "ucp_rndv_frags";
     status = ucs_mpool_init(&mp_params, mpool);
@@ -1217,10 +1204,6 @@ ucp_rndv_mpool_get(ucp_worker_h worker, ucs_memory_type_t mem_type,
         }
 
         goto err;
-    }
-
-    if (worker->context->config.ext.proto_enable) {
-        ucp_rndv_mpool_warn_max_elems_clamp(worker->context, key.mem_type);
     }
 
     mpriv                       = ucs_mpool_priv(mpool);

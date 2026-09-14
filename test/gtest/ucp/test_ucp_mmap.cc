@@ -1,5 +1,5 @@
 /**
-* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2026. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -1057,6 +1057,48 @@ UCS_TEST_P(test_ucp_mmap, rndv_mpool_quota_exhausted,
 
     ucs_mpool_put(mdesc2);
     ucs_mpool_put(mdesc1);
+}
+
+UCS_TEST_P(test_ucp_mmap, rndv_mpool_cap_smaller_than_alloc_count,
+           "PROTO_ENABLE=y", "RNDV_FRAG_SIZE=host:4K",
+           "RNDV_FRAG_ALLOC_COUNT=host:128",
+           "RNDV_FRAG_WORKER_MAX_MEM=8K")
+{
+    ucp_worker_h worker = sender().worker();
+    ucp_mem_desc_t *mdesc1;
+    ucp_mem_desc_t *mdesc2;
+    ucp_mem_desc_t *mdesc3;
+
+    if (!is_proto_enabled()) {
+        UCS_TEST_SKIP_R("requires proto v2 rendezvous fragment quota");
+    }
+
+    ASSERT_UCS_OK(ucp_rndv_mpool_get(worker, UCS_MEMORY_TYPE_HOST,
+                                     UCS_SYS_DEVICE_ID_UNKNOWN, &mdesc1));
+    ASSERT_UCS_OK(ucp_rndv_mpool_get(worker, UCS_MEMORY_TYPE_HOST,
+                                     UCS_SYS_DEVICE_ID_UNKNOWN, &mdesc2));
+    EXPECT_EQ(UCS_ERR_NO_RESOURCE,
+              ucp_rndv_mpool_get(worker, UCS_MEMORY_TYPE_HOST,
+                                 UCS_SYS_DEVICE_ID_UNKNOWN, &mdesc3));
+
+    ucs_mpool_put(mdesc2);
+    ucs_mpool_put(mdesc1);
+}
+
+UCS_TEST_P(test_ucp_mmap, rndv_mpool_cap_smaller_than_fragment,
+           "PROTO_ENABLE=y", "RNDV_FRAG_SIZE=host:4K",
+           "RNDV_FRAG_ALLOC_COUNT=host:128",
+           "RNDV_FRAG_WORKER_MAX_MEM=2K")
+{
+    ucp_mem_desc_t *mdesc;
+
+    if (!is_proto_enabled()) {
+        UCS_TEST_SKIP_R("requires proto v2 rendezvous fragment quota");
+    }
+
+    EXPECT_EQ(UCS_ERR_NO_RESOURCE,
+              ucp_rndv_mpool_get(sender().worker(), UCS_MEMORY_TYPE_HOST,
+                                 UCS_SYS_DEVICE_ID_UNKNOWN, &mdesc));
 }
 
 UCS_TEST_P(test_ucp_mmap, rndv_mpool_reserved_capacity,

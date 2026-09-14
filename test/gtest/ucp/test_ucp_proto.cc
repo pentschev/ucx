@@ -829,6 +829,21 @@ UCS_TEST_P(test_ucp_proto_rndv_force_cuda,
 }
 
 UCS_TEST_P(test_ucp_proto_rndv_force_cuda,
+           rndv_force_cap_smaller_than_fragment_falls_back,
+           "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
+           "RNDV_FRAG_MEM_TYPES=cuda", "RNDV_FRAG_SIZE=cuda:64K",
+           "RNDV_FRAG_ALLOC_COUNT=cuda:128",
+           "RNDV_FRAG_WORKER_MAX_MEM=32K")
+{
+    EXPECT_FALSE(should_force_host_cuda_pair(UCS_MEMORY_TYPE_HOST,
+                                             UCS_MEMORY_TYPE_HOST));
+    EXPECT_FALSE(should_force_host_cuda_pair(UCS_MEMORY_TYPE_HOST,
+                                             UCS_MEMORY_TYPE_CUDA));
+    EXPECT_FALSE(should_force_host_cuda_pair(UCS_MEMORY_TYPE_CUDA,
+                                             UCS_MEMORY_TYPE_HOST));
+}
+
+UCS_TEST_P(test_ucp_proto_rndv_force_cuda,
            rndv_force_host_cuda_uses_sender_fragment_only,
            "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
            "RNDV_FRAG_MEM_TYPES=cuda")

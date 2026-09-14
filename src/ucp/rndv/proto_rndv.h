@@ -1,5 +1,5 @@
 /**
- * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2021. ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2021-2026. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -99,14 +99,17 @@ static UCS_F_ALWAYS_INLINE int
 ucp_proto_rndv_host_cuda_staging_force(
         const ucp_proto_init_params_t *init_params)
 {
+    unsigned reserve;
+
     if (!ucp_proto_rndv_host_cuda_staging_candidate(init_params)) {
         return 0;
     }
 
-    return (init_params->select_param->mem_type != UCS_MEMORY_TYPE_HOST) ||
-           (init_params->rkey_config_key->mem_type != UCS_MEMORY_TYPE_HOST) ||
-           (ucp_proto_rndv_frag_max_elems(init_params->worker->context,
-                                          UCS_MEMORY_TYPE_CUDA) > 1);
+    reserve = ((init_params->select_param->mem_type == UCS_MEMORY_TYPE_HOST) &&
+               (init_params->rkey_config_key->mem_type ==
+                UCS_MEMORY_TYPE_HOST));
+    return ucp_proto_rndv_frag_max_elems(init_params->worker->context,
+                                         UCS_MEMORY_TYPE_CUDA) > reserve;
 }
 
 
