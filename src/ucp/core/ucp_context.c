@@ -396,7 +396,7 @@ static ucs_config_field_t ucp_context_config_table[] = {
    UCS_CONFIG_TYPE_BOOL},
 
   {"RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE", "n",
-   "Prefer CUDA-fragment staging for host-to-host and host-to-CUDA tag\n"
+   "Prefer CUDA-fragment staging for host-to-host and host-to/from-CUDA tag\n"
    "rendezvous transfers when RNDV_SCHEME is auto and the complete CUDA IPC\n"
    "path is available. CUDA IPC reachability may be intra-node or MNNVL.\n"
    "Other rendezvous protocols remain as fallback.",

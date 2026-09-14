@@ -64,7 +64,9 @@ of the following hold:
 
 The option does not require `RNDV_FRAG_WORKER_MAX_MEM` to be finite. When the
 user configures a finite value, every fragment used by this policy honors it.
-An explicit non-auto `RNDV_SCHEME` takes precedence and disables the policy.
+Host-to-host staging requires room for at least two fragments per worker; a
+one-fragment cap uses normal rendezvous fallback. An explicit non-auto
+`RNDV_SCHEME` takes precedence and disables the policy.
 
 ## Protocol Selection
 
@@ -124,18 +126,23 @@ until the operation that consumes it completes.
 
 ## Fragment Throttling and Lifetime
 
-No allocation bypass is added. Sender PUT staging and receiver RTR staging call
-`ucp_proto_rndv_mtype_request_init()`, which obtains a descriptor from the
-worker's fragment mpool keyed by memory type and system device. The mpool's
+No allocation bypass is added. Sender PUT staging and receiver RTR staging use
+the worker's fragment mpool keyed by memory type and system device. The mpool's
 `max_elems` derives from `RNDV_FRAG_WORKER_MAX_MEM`, `RNDV_FRAG_SIZE`, and
 `RNDV_FRAG_ALLOC_COUNT`.
 
-When a finite cap is exhausted, allocation returns `UCS_ERR_NO_RESOURCE` and
-the request enters the existing worker flow-control queues. PUT/GET work keeps
-priority over RTR work to favor operations that release memory. Returning a
-fragment schedules pending work. Normal completion, reset, cancellation, and
-abort paths must each return an acquired descriptor exactly once and remove
-queued requests without leaving callbacks behind.
+When a finite host-to-host pool has more than one element, receiver RTR staging
+may hold at most `max_elems - 1` descriptors, preserving one slot for sender PUT
+staging. This prevents reciprocal transfers from holding every local descriptor
+while both PUT children wait. A one-element pool cannot support that invariant,
+so host-to-host CUDA staging is not selected; CUDA-to-host remains eligible
+because it needs only the receiver fragment.
+
+When the available capacity is exhausted, allocation returns
+`UCS_ERR_NO_RESOURCE` and the request enters the existing worker flow-control
+queues. Returning a fragment schedules pending work. Normal completion, reset,
+cancellation, and abort paths must each return an acquired descriptor exactly
+once and remove queued requests without leaving callbacks behind.
 
 The cap applies independently to each worker and, as in the existing
 implementation, independently to each fragment memory-type/system-device
@@ -170,10 +177,11 @@ the protocol policy. Documentation will provide commands equivalent to:
 UCX_TLS=rc,cuda_copy,cuda_ipc \
 UCX_PROTO_ENABLE=y \
 UCX_PROTO_INFO=y \
+UCX_RNDV_THRESH=0 \
 UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
 UCX_RNDV_FRAG_MEM_TYPES=cuda \
 UCX_RNDV_FRAG_WORKER_MAX_MEM=256M \
-ucx_perftest -t tag_bw -m host,host
+ucx_perftest -t tag_bw -m host,host -s 8388608
 ```
 
 Replace `host,host` with `host,cuda` or `cuda,host` for the asymmetric cases.
@@ -199,12 +207,12 @@ Protocol-selection tests will cover:
   inter-node-exportable CUDA fragment allocation.
 
 A functional GPU-aware tag test will transfer and validate data for the three
-memory-type pairs. At least one multi-fragment case will configure a small
-finite `RNDV_FRAG_WORKER_MAX_MEM`, verify that the throttling counter advances,
-and verify that both workers' fragment flow-control queues are empty after
-completion. Where CI lacks two GPUs, NVLink, or MNNVL hardware, mock protocol
-tests provide deterministic selection coverage and hardware tests skip with a
-specific reason.
+memory-type pairs. Reciprocal host-to-host cases will cover one-fragment normal
+fallback and a small larger finite cap that stages both directions, advances
+the throttling counter, completes without circular wait, and leaves both
+workers' fragment flow-control queues empty. Where CI lacks two GPUs, NVLink,
+or MNNVL hardware, mock protocol tests provide deterministic selection coverage
+and hardware tests skip with a specific reason.
 
 ## Compatibility and Performance
 

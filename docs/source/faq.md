@@ -472,10 +472,11 @@ For same-node testing, start the server with:
 UCX_TLS=rc,cuda_copy,cuda_ipc \
 UCX_PROTO_ENABLE=y \
 UCX_PROTO_INFO=y \
+UCX_RNDV_THRESH=0 \
 UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
 UCX_RNDV_FRAG_MEM_TYPES=cuda \
 UCX_RNDV_FRAG_WORKER_MAX_MEM=256M \
-./src/tools/perf/ucx_perftest -t tag_bw -m host,host
+./src/tools/perf/ucx_perftest -t tag_bw -m host,host -s 8388608
 ```
 
 Run the client with the same environment and command, followed by the server
@@ -485,10 +486,11 @@ hostname:
 UCX_TLS=rc,cuda_copy,cuda_ipc \
 UCX_PROTO_ENABLE=y \
 UCX_PROTO_INFO=y \
+UCX_RNDV_THRESH=0 \
 UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
 UCX_RNDV_FRAG_MEM_TYPES=cuda \
 UCX_RNDV_FRAG_WORKER_MAX_MEM=256M \
-./src/tools/perf/ucx_perftest -t tag_bw -m host,host SERVER_HOSTNAME
+./src/tools/perf/ucx_perftest -t tag_bw -m host,host -s 8388608 SERVER_HOSTNAME
 ```
 
 Replace `SERVER_HOSTNAME` with the server hostname.
@@ -503,11 +505,12 @@ For cross-node MNNVL testing, enable CUDA IPC MNNVL support on both peers:
 UCX_TLS=rc,cuda_copy,cuda_ipc \
 UCX_PROTO_ENABLE=y \
 UCX_PROTO_INFO=y \
+UCX_RNDV_THRESH=0 \
 UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
 UCX_RNDV_FRAG_MEM_TYPES=cuda \
 UCX_RNDV_FRAG_WORKER_MAX_MEM=256M \
 UCX_CUDA_IPC_ENABLE_MNNVL=y \
-./src/tools/perf/ucx_perftest -t tag_bw -m host,host
+./src/tools/perf/ucx_perftest -t tag_bw -m host,host -s 8388608
 ```
 
 Run the client with the same environment and command, followed by the server
@@ -517,11 +520,12 @@ hostname:
 UCX_TLS=rc,cuda_copy,cuda_ipc \
 UCX_PROTO_ENABLE=y \
 UCX_PROTO_INFO=y \
+UCX_RNDV_THRESH=0 \
 UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
 UCX_RNDV_FRAG_MEM_TYPES=cuda \
 UCX_RNDV_FRAG_WORKER_MAX_MEM=256M \
 UCX_CUDA_IPC_ENABLE_MNNVL=y \
-./src/tools/perf/ucx_perftest -t tag_bw -m host,host SERVER_HOSTNAME
+./src/tools/perf/ucx_perftest -t tag_bw -m host,host -s 8388608 SERVER_HOSTNAME
 ```
 
 Both peers also require CUDA IPC MNNVL/fabric support and a configured NVIDIA

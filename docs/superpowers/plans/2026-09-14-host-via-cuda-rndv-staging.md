@@ -85,7 +85,7 @@ Add the context field next to the existing staging option and this config entry 
 
 ```c
 {"RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE", "n",
- "Prefer CUDA-fragment staging for host-to-host and host-to-CUDA tag\n"
+ "Prefer CUDA-fragment staging for host-to-host and host-to/from-CUDA tag\n"
  "rendezvous transfers when RNDV_SCHEME is auto and the complete CUDA IPC\n"
  "path is available. CUDA IPC reachability may be intra-node or MNNVL.\n"
  "Other rendezvous protocols remain as fallback.",
@@ -195,14 +195,17 @@ modify_config("RNDV_THRESH", "0");
 modify_config("RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE", "y");
 modify_config("RNDV_FRAG_MEM_TYPES", "cuda");
 modify_config("RNDV_FRAG_SIZE", "cuda:64K");
-modify_config("RNDV_FRAG_ALLOC_COUNT", "cuda:1");
-modify_config("RNDV_FRAG_WORKER_MAX_MEM", "64K");
+modify_config("RNDV_FRAG_ALLOC_COUNT", "cuda:2");
+modify_config("RNDV_FRAG_WORKER_MAX_MEM", "128K");
 ```
 
 Add `check_pending_queues_empty(entity&)` that iterates
 `UCP_WORKER_RNDV_FC_OP_LAST`. Transfer 256 KiB, validate the destination,
-assert that the sum of the workers' `UCP_WORKER_STAT_RNDV_MTYPE_FC_THROTTLED`
-counters is greater than zero, and assert that both workers' queues are empty.
+use direction-specific PUT/RTR counter deltas, assert that the workers'
+`UCP_WORKER_STAT_RNDV_MTYPE_FC_THROTTLED` total increases, and assert that both
+workers' queues are empty. Add reciprocal host-to-host transfers posted before
+either direction completes: a one-fragment cap must complete through normal
+fallback, while a two-fragment cap must stage, throttle, and complete.
 
 - [ ] **Step 3: Run selection and functional tests and verify RED**
 
@@ -234,14 +237,17 @@ if (ucp_proto_rndv_host_cuda_staging_force(init_params)) {
 }
 ```
 
-The CUDA-child control flag is set only when the child is a pipeline fragment
-whose `reg_mem_info.type` is `UCS_MEMORY_TYPE_CUDA`. A control envelope is
-promoted only if its remote child remains selectable and carries the matching
-CUDA-child flag. Host-fragment variants and incomplete CUDA paths retain
-`UCS_MEMUNITS_INF` so they can serve only as normal last-resort fallbacks.
+The CUDA-child control flag is set when a selected child uses a CUDA fragment.
+A control envelope is promoted only if its remote child remains selectable and
+carries the matching CUDA-child flag. Host-fragment variants and incomplete
+CUDA paths retain `UCS_MEMUNITS_INF` so they can serve only as normal
+last-resort fallbacks.
 
-Keep `ucp_proto_rndv_put_mtype_frag_mem_type()` unchanged: every forced RTR
-publishes a CUDA fragment key, so the existing exact-rkey-type preference makes
+For host-to-CUDA, promote the receiver's plain RTR control path only when its
+remote PUT child is the CUDA-fragment child. This yields the required
+host A -> CUDA fragment A -> CUDA B path without allocating an RTR fragment at
+CUDA B. CUDA-to-host uses only the receiver RTR fragment. Host-to-host publishes
+a receiver CUDA fragment key, and the existing exact-rkey-type preference makes
 the sender choose a CUDA fragment as well.
 
 - [ ] **Step 6: Preserve inter-node exportability in protocol estimation**
@@ -265,13 +271,15 @@ Add a predicate-level inter-node case in `test_ucp_proto.cc` with and without
 the CUDA IPC child. Reuse existing UCT CUDA IPC tests for the lower-level MNNVL
 address/reachability contract rather than duplicating it in UCP.
 
-- [ ] **Step 8: Correct resource lifetime only if the functional RED test exposes it**
+- [ ] **Step 8: Reserve sender progress in finite host-to-host pools**
 
-The expected flow already calls `ucp_proto_rndv_mtype_request_init()`. If the
-functional test exposes a leak or stall, correct the matching existing path so
-`ucp_proto_rndv_mtype_mdesc_release(req)` runs exactly once after the final
-consumer and `ucp_proto_rndv_mtype_fc_cancel()` removes queued/rescheduled
-requests during abort. Do not add a counter, quota, or staging-specific queue.
+For a finite host-to-host CUDA fragment pool larger than one element, limit RTR
+allocations to `max_elems - 1` while using the existing mpool and flow-control
+queues, leaving one descriptor available to a sender PUT child. Pair the
+reservation accounting on every completion, reset, cancellation, and abort
+path. With a one-element cap, do not select the host-to-host CUDA-staged
+candidate; normal fallback is required. Do not apply this reservation to
+CUDA-to-host or to the existing CUDA-via-host policy.
 
 - [ ] **Step 9: Run focused and flow-control tests and verify GREEN**
 
@@ -318,10 +326,11 @@ environment and command:
 UCX_TLS=rc,cuda_copy,cuda_ipc \
 UCX_PROTO_ENABLE=y \
 UCX_PROTO_INFO=y \
+UCX_RNDV_THRESH=0 \
 UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
 UCX_RNDV_FRAG_MEM_TYPES=cuda \
 UCX_RNDV_FRAG_WORKER_MAX_MEM=256M \
-./src/tools/perf/ucx_perftest -t tag_bw -m host,host
+./src/tools/perf/ucx_perftest -t tag_bw -m host,host -s 8388608
 ```
 
 Show the client form with the server hostname and state that `host,cuda` and
