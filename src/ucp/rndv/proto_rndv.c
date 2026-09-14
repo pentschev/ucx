@@ -379,7 +379,8 @@ static ucp_proto_select_param_t ucp_proto_rndv_remote_select_param_init(
                                     UCP_DATATYPE_CONTIG, &mem_info, 1);
     }
 
-    if (ucp_proto_rndv_shm_pipeline_force(init_params) &&
+    if ((ucp_proto_rndv_shm_pipeline_force(init_params) ||
+         ucp_proto_rndv_host_cuda_staging_force(init_params)) &&
         ucp_proto_rndv_init_params_is_ppln_frag(init_params)) {
         remote_select_param.op_id_flags |= UCP_PROTO_SELECT_OP_FLAG_PPLN_FRAG;
     }
@@ -442,6 +443,7 @@ static void ucp_proto_rndv_ctrl_variant_probe(
     ucp_proto_perf_t *ctrl_perf, *remote_perf;
     UCS_STRING_BUFFER_ONSTACK(perf_name_buf, 256);
     size_t cfg_thresh, cfg_priority;
+    int force_cuda_frag;
     int force_shm_pipeline;
     ucs_linear_func_t overhead;
     ucp_proto_perf_t *perf;
@@ -501,6 +503,8 @@ static void ucp_proto_rndv_ctrl_variant_probe(
 
     /* Set priority and threshold for this variant */
     force_shm_pipeline = ucp_proto_rndv_shm_pipeline_force(&params->super.super);
+    force_cuda_frag    = ucp_proto_rndv_host_cuda_staging_force(
+            &params->super.super);
     if ((context->config.ext.rndv_mode != UCP_RNDV_MODE_AUTO) &&
         !(params->flags & UCP_PROTO_RNDV_CTRL_FLAG_FORCE_SHM_PIPELINE_CHILD) &&
         (remote_proto->cfg_thresh != UCS_MEMUNITS_AUTO)) {
@@ -512,9 +516,10 @@ static void ucp_proto_rndv_ctrl_variant_probe(
 
     cfg_priority = ucp_proto_rndv_ctrl_variant_cfg_priority(
             params, remote_proto->cfg_thresh, remote_proto->cfg_priority,
-            force_shm_pipeline);
+            force_shm_pipeline || force_cuda_frag);
     cfg_thresh = ucp_proto_rndv_ctrl_variant_cfg_thresh(
-            params, remote_proto->cfg_thresh, force_shm_pipeline);
+            params, remote_proto->cfg_thresh, force_shm_pipeline,
+            force_cuda_frag);
 
     if (fabs(params->perf_bias) > UCP_PROTO_PERF_EPSILON) {
         ucp_proto_perf_apply_func(perf,
@@ -993,7 +998,7 @@ UCS_PROFILE_FUNC_VOID(ucp_proto_rndv_receive_start,
                                     &sg_count);
     }
 
-    op_flags = ucp_proto_rndv_shm_pipeline_force_enabled(worker->context) ?
+    op_flags = ucp_proto_rndv_staging_force_enabled(worker->context) ?
                ucp_proto_rndv_rts_tag_op_flags(rts->opcode) : 0;
     status   = ucp_proto_rndv_send_reply(
             worker, req, op_id, recv_req->recv.op_attr, op_flags, rts->size,
@@ -1192,7 +1197,7 @@ ucp_proto_rndv_handle_rtr(void *arg, void *data, size_t length, unsigned flags)
     select_param = &req->send.proto_config->select_param;
     op_attr_mask = ucp_proto_select_op_attr_unpack(select_param->op_attr);
     if (is_offloaded) {
-        op_flags = ucp_proto_rndv_shm_pipeline_force_enabled(worker->context) ?
+        op_flags = ucp_proto_rndv_staging_force_enabled(worker->context) ?
                    UCP_PROTO_SELECT_OP_FLAG_TAG_RNDV : 0;
     } else {
         const ucp_proto_rndv_ctrl_priv_t *rpriv = req->send.proto_config->priv;

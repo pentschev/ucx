@@ -95,25 +95,9 @@ ucp_proto_rndv_ctrl_init_flags(
 {
     const ucp_proto_init_params_t *init_params = &params->super.super;
 
-    /* Check that the force policy applies to this control protocol. */
-    if (!ucp_proto_rndv_shm_pipeline_force(init_params)) {
-        return 0;
-    }
-
     /* Check that this control protocol selects a pipeline fragment. */
     if (!(ucp_proto_select_op_flags(init_params->select_param) &
           UCP_PROTO_SELECT_OP_FLAG_PPLN_FRAG)) {
-        return 0;
-    }
-
-    /* Check that this is the receiver-side rendezvous operation. */
-    if (ucp_proto_select_op_id(init_params->select_param) !=
-        UCP_OP_ID_RNDV_RECV) {
-        return 0;
-    }
-
-    /* Check that the child uses host memory staging. */
-    if (params->super.reg_mem_info.type != UCS_MEMORY_TYPE_HOST) {
         return 0;
     }
 
@@ -122,7 +106,19 @@ ucp_proto_rndv_ctrl_init_flags(
         return 0;
     }
 
-    return UCP_PROTO_RNDV_CTRL_FLAG_FORCE_SHM_PIPELINE_CHILD;
+    if (ucp_proto_rndv_shm_pipeline_force(init_params) &&
+        (ucp_proto_select_op_id(init_params->select_param) ==
+         UCP_OP_ID_RNDV_RECV) &&
+        (params->super.reg_mem_info.type == UCS_MEMORY_TYPE_HOST)) {
+        return UCP_PROTO_RNDV_CTRL_FLAG_FORCE_SHM_PIPELINE_CHILD;
+    }
+
+    if (ucp_proto_rndv_host_cuda_staging_force(init_params) &&
+        (params->super.reg_mem_info.type == UCS_MEMORY_TYPE_CUDA)) {
+        return UCP_PROTO_RNDV_CTRL_FLAG_FORCE_CUDA_FRAG_CHILD;
+    }
+
+    return 0;
 }
 
 static UCS_F_ALWAYS_INLINE size_t
@@ -139,6 +135,11 @@ ucp_proto_rndv_cfg_thresh(const ucp_proto_init_params_t *init_params,
                UCS_MEMUNITS_AUTO : UCS_MEMUNITS_INF;
     }
 
+    if (ucp_proto_rndv_host_cuda_staging_force(init_params)) {
+        return (rndv_modes & UCS_BIT(UCP_RNDV_MODE_PUT_PIPELINE)) ?
+               UCS_MEMUNITS_AUTO : UCS_MEMUNITS_INF;
+    }
+
     if ((mode == UCP_RNDV_MODE_AUTO) || (rndv_modes & UCS_BIT(mode))) {
         return UCS_MEMUNITS_AUTO;
     }
@@ -150,11 +151,11 @@ static UCS_F_ALWAYS_INLINE unsigned
 ucp_proto_rndv_ctrl_variant_cfg_priority(
         const ucp_proto_rndv_ctrl_init_params_t *params,
         size_t remote_cfg_thresh, unsigned remote_cfg_priority,
-        int force_shm_pipeline)
+        int force_pipeline)
 {
     unsigned cfg_priority = params->super.cfg_priority;
 
-    if (force_shm_pipeline && (remote_cfg_thresh != UCS_MEMUNITS_AUTO) &&
+    if (force_pipeline && (remote_cfg_thresh != UCS_MEMUNITS_AUTO) &&
         (remote_cfg_thresh != UCS_MEMUNITS_INF)) {
         cfg_priority = ucs_max(cfg_priority, remote_cfg_priority);
     }
@@ -165,11 +166,19 @@ ucp_proto_rndv_ctrl_variant_cfg_priority(
 static UCS_F_ALWAYS_INLINE size_t
 ucp_proto_rndv_ctrl_variant_cfg_thresh(
         const ucp_proto_rndv_ctrl_init_params_t *params,
-        size_t remote_cfg_thresh, int force_shm_pipeline)
+        size_t remote_cfg_thresh, int force_shm_pipeline,
+        int force_cuda_frag)
 {
     if (force_shm_pipeline) {
         return ((params->flags &
                  UCP_PROTO_RNDV_CTRL_FLAG_FORCE_SHM_PIPELINE_CHILD) &&
+                (remote_cfg_thresh != UCS_MEMUNITS_INF)) ?
+               remote_cfg_thresh : UCS_MEMUNITS_INF;
+    }
+
+    if (force_cuda_frag) {
+        return ((params->flags &
+                 UCP_PROTO_RNDV_CTRL_FLAG_FORCE_CUDA_FRAG_CHILD) &&
                 (remote_cfg_thresh != UCS_MEMUNITS_INF)) ?
                remote_cfg_thresh : UCS_MEMUNITS_INF;
     }

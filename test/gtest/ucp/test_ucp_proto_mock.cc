@@ -1320,9 +1320,18 @@ class test_ucp_proto_mock_cuda_ipc : public test_ucp_proto_mock {
 public:
     test_ucp_proto_mock_cuda_ipc()
     {
+        stats_activate();
+
         if (has_transport("rc_x")) {
             mock_transport("rc_mlx5");
+        } else if (has_transport("tcp")) {
+            mock_transport("tcp");
         }
+    }
+
+    ~test_ucp_proto_mock_cuda_ipc()
+    {
+        stats_restore();
     }
 
     virtual void init() override
@@ -1331,8 +1340,8 @@ public:
             UCS_TEST_SKIP_R("CUDA memory is not supported");
         }
 
-        if (!has_transport("rc_x")) {
-            UCS_TEST_SKIP_R("rc_mlx5 transport is not supported");
+        if (!has_transport("rc_x") && !has_transport("tcp")) {
+            UCS_TEST_SKIP_R("rc_mlx5 and tcp transports are not supported");
         }
 
         /* Keep protocol selection independent of NVLink probing. */
@@ -1368,7 +1377,192 @@ public:
 
         check_rkey_config(sender(), data_vec, key, rkey_cfg_index);
     }
+
+    std::string tag_rndv_protocol_info(ucs_memory_type_t send_type,
+                                       ucs_memory_type_t recv_type)
+    {
+        const size_t msg_length = UCS_MBYTE;
+        entity &e               = sender();
+        ucp_worker_cfg_index_t ep_cfg_index = ep_config_index(e);
+        ucp_rkey_config_key_t rkey_config_key = {};
+        ucp_worker_cfg_index_t rkey_cfg_index;
+        ucp_proto_select_param_t select_param;
+        ucp_memory_info_t mem_info = {
+            .type    = static_cast<uint8_t>(recv_type),
+            .sys_dev = UCS_SYS_DEVICE_ID_UNKNOWN,
+            .flags   = UCS_MEM_FLAG_REGISTRABLE
+        };
+        const ucp_proto_threshold_elem_t *threshold;
+        ucp_proto_select_elem_t *select_elem;
+        ucp_proto_select_t *proto_select;
+        ucs_string_buffer_t strb;
+        ucs_status_t status;
+        std::string info;
+
+        rkey_config_key.ep_cfg_index = ep_cfg_index;
+        rkey_config_key.mem_type     = send_type;
+        rkey_config_key.sys_dev      = UCS_SYS_DEVICE_ID_UNKNOWN;
+        status = ucp_worker_rkey_config_get(e.worker(), &rkey_config_key, NULL,
+                                            &rkey_cfg_index);
+        EXPECT_UCS_OK(status);
+        if (status != UCS_OK) {
+            return info;
+        }
+
+        proto_select = &ucs_array_elem(&e.worker()->rkey_config,
+                                       rkey_cfg_index).proto_select;
+        ucp_proto_select_param_init(
+                &select_param, UCP_OP_ID_RNDV_RECV, 0,
+                UCP_PROTO_SELECT_OP_FLAG_TAG_RNDV, UCP_DATATYPE_CONTIG,
+                &mem_info, 1);
+        select_elem = ucp_proto_select_lookup_slow(
+                e.worker(), proto_select, 1, ep_cfg_index, rkey_cfg_index,
+                &select_param);
+        EXPECT_NE(nullptr, select_elem);
+        if (select_elem == nullptr) {
+            return info;
+        }
+
+        threshold = ucp_proto_thresholds_search_slow(select_elem->thresholds,
+                                                     msg_length);
+        ucs_string_buffer_init(&strb);
+        ucp_proto_config_info_str(e.worker(), &threshold->proto_config,
+                                  msg_length, &strb);
+        info = ucs_string_buffer_cstr(&strb);
+        ucs_string_buffer_cleanup(&strb);
+        return info;
+    }
+
+    void tag_send_recv(size_t size, ucs_memory_type_t send_type,
+                       ucs_memory_type_t recv_type)
+    {
+        static const uint64_t pattern = 0x0123456789abcdefull;
+        mem_buffer send_buf(size, send_type);
+        mem_buffer recv_buf(size, recv_type);
+        ucp_request_param_t param = {};
+        ucs_status_ptr_t recv_req;
+        ucs_status_ptr_t send_req;
+
+        send_buf.pattern_fill(pattern);
+        recv_buf.pattern_fill(~pattern);
+
+        recv_req = ucp_tag_recv_nbx(receiver().worker(), recv_buf.ptr(), size,
+                                    1, UINT64_MAX, &param);
+        ASSERT_UCS_PTR_OK(recv_req);
+        send_req = ucp_tag_send_nbx(sender().ep(), send_buf.ptr(), size, 1,
+                                    &param);
+        ASSERT_UCS_PTR_OK(send_req);
+
+        EXPECT_EQ(UCS_OK, request_wait(send_req));
+        EXPECT_EQ(UCS_OK, request_wait(recv_req));
+        recv_buf.pattern_check(pattern);
+    }
+
+    static void check_pending_queues_empty(const entity &e)
+    {
+        const ucp_worker_h worker = e.worker();
+
+        for (unsigned i = 0; i < UCP_WORKER_RNDV_FC_OP_LAST; ++i) {
+            EXPECT_TRUE(ucs_queue_is_empty(&worker->rndv_mtype_fc.pending_q[i]))
+                    << "pending_q[" << i << "] should be empty";
+        }
+    }
 };
+
+UCS_TEST_P(test_ucp_proto_mock_cuda_ipc, host_cuda_force_complete_paths,
+           "RNDV_THRESH=0", "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
+           "RNDV_FRAG_MEM_TYPES=cuda", "RNDV_FRAG_SIZE=cuda:64K")
+{
+    struct case_t {
+        ucs_memory_type_t send_type;
+        ucs_memory_type_t recv_type;
+        const char        *required_stage;
+    };
+
+    const case_t cases[] = {
+        {UCS_MEMORY_TYPE_HOST, UCS_MEMORY_TYPE_CUDA, "frag cuda"},
+        {UCS_MEMORY_TYPE_CUDA, UCS_MEMORY_TYPE_HOST, "frag cuda"},
+        {UCS_MEMORY_TYPE_HOST, UCS_MEMORY_TYPE_HOST, "frag cuda"}
+    };
+
+    for (const auto &test_case : cases) {
+        const std::string info = tag_rndv_protocol_info(test_case.send_type,
+                                                        test_case.recv_type);
+
+        /* The receive envelope names the operation "rndv_recv" and its
+         * selected child "pipeline"; the top-level RTS query prefixes the
+         * latter description with "rendezvous". */
+        EXPECT_NE(std::string::npos, info.find("rndv_recv(tag-rndv)")) << info;
+        EXPECT_NE(std::string::npos, info.find("pipeline ")) << info;
+        EXPECT_NE(std::string::npos, info.find(test_case.required_stage))
+                << info;
+        EXPECT_NE(std::string::npos, info.find("cuda_copy")) << info;
+        EXPECT_NE(std::string::npos, info.find("cuda_ipc")) << info;
+    }
+
+    const std::string cuda_cuda_info = tag_rndv_protocol_info(
+            UCS_MEMORY_TYPE_CUDA, UCS_MEMORY_TYPE_CUDA);
+    EXPECT_EQ(std::string::npos, cuda_cuda_info.find("frag cuda"))
+            << cuda_cuda_info;
+}
+
+UCS_TEST_P(test_ucp_proto_mock_cuda_ipc, host_cuda_force_disabled_by_default,
+           "RNDV_THRESH=0", "RNDV_FRAG_MEM_TYPES=cuda")
+{
+    const std::string info = tag_rndv_protocol_info(UCS_MEMORY_TYPE_HOST,
+                                                    UCS_MEMORY_TYPE_HOST);
+
+    EXPECT_EQ(std::string::npos, info.find("frag cuda")) << info;
+}
+
+UCS_TEST_P(test_ucp_proto_mock_cuda_ipc, host_cuda_force_fallback,
+           "TLS=tcp,cuda_copy", "RNDV_THRESH=0",
+           "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
+           "RNDV_FRAG_MEM_TYPES=cuda")
+{
+    const std::string info = tag_rndv_protocol_info(UCS_MEMORY_TYPE_HOST,
+                                                    UCS_MEMORY_TYPE_HOST);
+
+    EXPECT_FALSE(info.empty());
+    EXPECT_EQ(std::string::npos, info.find("frag cuda")) << info;
+    EXPECT_EQ(std::string::npos, info.find("cuda_ipc")) << info;
+}
+
+#ifdef ENABLE_STATS
+UCS_TEST_P(test_ucp_proto_mock_cuda_ipc, host_cuda_force_fragment_throttling,
+           "RNDV_THRESH=0", "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
+           "RNDV_FRAG_MEM_TYPES=cuda", "RNDV_FRAG_SIZE=cuda:64K",
+           "RNDV_FRAG_ALLOC_COUNT=cuda:1", "RNDV_FRAG_WORKER_MAX_MEM=64K")
+{
+    const size_t msg_size = 256 * UCS_KBYTE;
+    const std::pair<ucs_memory_type_t, ucs_memory_type_t> cases[] = {
+        {UCS_MEMORY_TYPE_HOST, UCS_MEMORY_TYPE_HOST},
+        {UCS_MEMORY_TYPE_HOST, UCS_MEMORY_TYPE_CUDA},
+        {UCS_MEMORY_TYPE_CUDA, UCS_MEMORY_TYPE_HOST}
+    };
+
+    for (const auto &test_case : cases) {
+        tag_send_recv(msg_size, test_case.first, test_case.second);
+    }
+
+    const uint64_t sender_throttled = UCS_STATS_GET_COUNTER(
+            sender().worker()->stats,
+            UCP_WORKER_STAT_RNDV_MTYPE_FC_THROTTLED);
+    const uint64_t receiver_throttled = UCS_STATS_GET_COUNTER(
+            receiver().worker()->stats,
+            UCP_WORKER_STAT_RNDV_MTYPE_FC_THROTTLED);
+    const uint64_t put_mtype = UCS_STATS_GET_COUNTER(
+            sender().worker()->stats, UCP_WORKER_STAT_RNDV_PUT_MTYPE_ZCOPY);
+    const uint64_t rtr_mtype = UCS_STATS_GET_COUNTER(
+            receiver().worker()->stats, UCP_WORKER_STAT_RNDV_RTR_MTYPE);
+
+    EXPECT_GT(put_mtype, 0u);
+    EXPECT_GT(rtr_mtype, 0u);
+    EXPECT_GT(sender_throttled + receiver_throttled, 0u);
+    check_pending_queues_empty(sender());
+    check_pending_queues_empty(receiver());
+}
+#endif
 
 UCS_TEST_P(test_ucp_proto_mock_cuda_ipc, put, "ZCOPY_THRESH=1")
 {
@@ -1386,6 +1580,8 @@ UCS_TEST_P(test_ucp_proto_mock_cuda_ipc, get, "ZCOPY_THRESH=1")
 
 UCP_INSTANTIATE_TEST_CASE_TLS_GPU_AWARE(test_ucp_proto_mock_cuda_ipc,
                                         shm_rc_ipc, "rc_x,cuda_ipc,rocm_ipc")
+UCP_INSTANTIATE_TEST_CASE_TLS_GPU_AWARE(test_ucp_proto_mock_cuda_ipc,
+                                        tcp_ipc, "tcp,cuda_ipc,rocm_ipc")
 
 /*
  * cuda_ipc can copy memory from a different node only if the allocation is
@@ -1421,6 +1617,24 @@ public:
     }
 
 protected:
+    void set_cuda_frag_exportable(bool is_exportable)
+    {
+        ucp_context_h context = sender().ucph();
+        ucp_memory_info_t mem_info;
+        ucp_md_index_t md_index;
+
+        ASSERT_UCS_OK(ucp_mm_get_alloc_md_index(
+                context, UCS_MEMORY_TYPE_CUDA, UCS_SYS_DEVICE_ID_UNKNOWN,
+                &md_index, &mem_info));
+        if (is_exportable) {
+            context->alloc_md[UCS_MEMORY_TYPE_CUDA].mem_flags |=
+                    UCS_MEM_FLAG_MEMTYPE_COPY_INTER_NODE;
+        } else {
+            context->alloc_md[UCS_MEMORY_TYPE_CUDA].mem_flags &=
+                    ~UCS_MEM_FLAG_MEMTYPE_COPY_INTER_NODE;
+        }
+    }
+
     /* Return the memory domain index of the cuda_ipc lane, or
      * UCP_NULL_RESOURCE if no such lane was selected. */
     ucp_md_index_t cuda_ipc_md_index()
@@ -1500,8 +1714,38 @@ UCS_TEST_P(test_ucp_proto_mock_cuda_ipc_inter_node, rtr_md_map,
                 UCS_BIT(md_index));
 }
 
+UCS_TEST_P(test_ucp_proto_mock_cuda_ipc_inter_node,
+           host_cuda_force_exportable_frag,
+           "RNDV_THRESH=0", "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
+           "RNDV_FRAG_MEM_TYPES=cuda", "RNDV_FRAG_SIZE=cuda:64K")
+{
+    set_cuda_frag_exportable(true);
+
+    const std::string info = tag_rndv_protocol_info(UCS_MEMORY_TYPE_HOST,
+                                                    UCS_MEMORY_TYPE_HOST);
+    EXPECT_NE(std::string::npos, info.find("pipeline ")) << info;
+    EXPECT_NE(std::string::npos, info.find("frag cuda")) << info;
+    EXPECT_NE(std::string::npos, info.find("cuda_ipc")) << info;
+}
+
+UCS_TEST_P(test_ucp_proto_mock_cuda_ipc_inter_node,
+           host_cuda_force_nonexportable_fallback,
+           "RNDV_THRESH=0", "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
+           "RNDV_FRAG_MEM_TYPES=cuda", "RNDV_FRAG_SIZE=cuda:64K")
+{
+    set_cuda_frag_exportable(false);
+
+    const std::string info = tag_rndv_protocol_info(UCS_MEMORY_TYPE_HOST,
+                                                    UCS_MEMORY_TYPE_HOST);
+    EXPECT_FALSE(info.empty());
+    EXPECT_EQ(std::string::npos, info.find("frag cuda")) << info;
+    EXPECT_EQ(std::string::npos, info.find("cuda_ipc")) << info;
+}
+
 UCP_INSTANTIATE_TEST_CASE_TLS_GPU_AWARE(test_ucp_proto_mock_cuda_ipc_inter_node,
                                         shm_rc_ipc, "rc_x,cuda_ipc,rocm_ipc")
+UCP_INSTANTIATE_TEST_CASE_TLS_GPU_AWARE(test_ucp_proto_mock_cuda_ipc_inter_node,
+                                        tcp_ipc, "tcp,cuda_ipc,rocm_ipc")
 
 class test_ucp_proto_mock_rcx_twins : public test_ucp_proto_mock {
 public:

@@ -248,7 +248,7 @@ static void ucp_proto_rndv_rtr_probe(const ucp_proto_init_params_t *init_params)
         .super.reg_mem_info  = ucp_proto_common_select_param_mem_info(
                                                      init_params->select_param),
         .remote_op_id        = UCP_OP_ID_RNDV_SEND,
-        .remote_op_flags     = ucp_proto_rndv_shm_pipeline_force_enabled(
+        .remote_op_flags     = ucp_proto_rndv_staging_force_enabled(
                                        context) ?
                                (ucp_proto_select_op_flags(
                                         init_params->select_param) &
@@ -479,7 +479,7 @@ ucp_proto_rndv_rtr_mtype_probe(const ucp_proto_init_params_t *init_params)
                                UCP_PROTO_COMMON_KEEP_MD_MAP,
         .super.exclude_map   = 0,
         .remote_op_id        = UCP_OP_ID_RNDV_SEND,
-        .remote_op_flags     = ucp_proto_rndv_shm_pipeline_force_enabled(
+        .remote_op_flags     = ucp_proto_rndv_staging_force_enabled(
                                        context) ?
                                (ucp_proto_select_op_flags(
                                         init_params->select_param) &
