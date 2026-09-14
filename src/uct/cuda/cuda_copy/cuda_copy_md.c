@@ -357,6 +357,7 @@ uct_cuda_copy_mem_alloc(uct_md_h uct_md, size_t *length_p, void **address_p,
     uct_cuda_copy_alloc_handle_t *alloc_handle;
     ucs_log_level_t log_level;
     CUdevice avail_cuda_device, cuda_device;
+    int primary_ctx_retained = 0;
 
     if ((mem_type != UCS_MEMORY_TYPE_CUDA_MANAGED) &&
         (mem_type != UCS_MEMORY_TYPE_CUDA)) {
@@ -374,13 +375,16 @@ uct_cuda_copy_mem_alloc(uct_md_h uct_md, size_t *length_p, void **address_p,
         return UCS_ERR_NO_MEMORY;
     }
 
-    alloc_handle->length = *length_p;
-    alloc_handle->is_vmm = 0;
+    alloc_handle->length          = *length_p;
+    alloc_handle->retained_ctx    = NULL;
+    alloc_handle->retained_device = CU_DEVICE_INVALID;
+    alloc_handle->is_vmm          = 0;
 
     status = uct_cuda_ctx_primary_push_avail(md->config.retain_primary_ctx,
                                              sys_dev, &cuda_device,
                                              &avail_cuda_device, log_level);
     if (status != UCS_OK) {
+        ucs_free(alloc_handle);
         return UCS_ERR_NO_DEVICE;
     }
 
@@ -443,13 +447,30 @@ allocated:
         goto out;
     }
 
+    if ((cuda_device != avail_cuda_device) &&
+        md->config.retain_primary_ctx) {
+        status = UCT_CUDADRV_FUNC(cuCtxGetCurrent(&alloc_handle->retained_ctx),
+                                  log_level);
+        if (status != UCS_OK) {
+            (void)uct_md_mem_free(uct_md, alloc_handle);
+            goto out;
+        }
+
+        alloc_handle->retained_device = avail_cuda_device;
+        primary_ctx_retained          = 1;
+    }
+
     *memh_p    = alloc_handle;
     *address_p = (void*)alloc_handle->ptr;
     *length_p  = alloc_handle->length;
 
 out:
     if (cuda_device != avail_cuda_device) {
-        uct_cuda_ctx_primary_pop_and_release(avail_cuda_device);
+        if (primary_ctx_retained) {
+            UCT_CUDADRV_FUNC_LOG_WARN(cuCtxPopCurrent(NULL));
+        } else {
+            uct_cuda_ctx_primary_pop_and_release(avail_cuda_device);
+        }
     }
 
     return status;
@@ -535,12 +556,34 @@ static ucs_status_t uct_cuda_copy_mem_free(uct_md_h md, uct_mem_h memh)
     uct_cuda_copy_alloc_handle_t *alloc_handle = (uct_cuda_copy_alloc_handle_t*)
             memh;
     ucs_status_t status;
+    int ctx_pushed = 0;
+
+    if (alloc_handle->retained_ctx != NULL) {
+        status = UCT_CUDADRV_FUNC(
+                cuCtxPushCurrent(alloc_handle->retained_ctx),
+                UCS_LOG_LEVEL_DIAG);
+        if (status != UCS_OK) {
+            goto out_release_ctx;
+        }
+
+        ctx_pushed = 1;
+    }
 
     if (alloc_handle->is_vmm) {
         status = uct_cuda_copy_mem_release_fabric(alloc_handle);
     } else {
-        UCT_CUDADRV_FUNC(cuMemFree(alloc_handle->ptr), UCS_LOG_LEVEL_DIAG);
-        status = UCS_OK;
+        status = UCT_CUDADRV_FUNC(cuMemFree(alloc_handle->ptr),
+                                  UCS_LOG_LEVEL_DIAG);
+    }
+
+    if (ctx_pushed) {
+        UCT_CUDADRV_FUNC_LOG_WARN(cuCtxPopCurrent(NULL));
+    }
+
+out_release_ctx:
+    if (alloc_handle->retained_ctx != NULL) {
+        UCT_CUDADRV_FUNC_LOG_WARN(
+                cuDevicePrimaryCtxRelease(alloc_handle->retained_device));
     }
 
     ucs_free(alloc_handle);

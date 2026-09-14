@@ -59,6 +59,8 @@ typedef struct uct_cuda_copy_md_config {
 typedef struct uct_cuda_copy_alloc_handle {
     CUdeviceptr                 ptr;
     size_t                      length;
+    CUcontext                   retained_ctx;
+    CUdevice                    retained_device;
     uint8_t                     is_vmm;
 #if HAVE_CUDA_FABRIC
     CUmemGenericAllocationHandle generic_handle;
