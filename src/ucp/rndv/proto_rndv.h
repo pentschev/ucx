@@ -9,7 +9,10 @@
 
 #include "rndv.h"
 
+#include <ucp/core/ucp_context.h>
+#include <ucp/proto/proto_init.h>
 #include <ucp/proto/proto_multi.h>
+#include <ucp/proto/proto_select.inl>
 
 
 /* Rendezvous protocol description and control message names */
@@ -27,7 +30,8 @@
 
 
 enum {
-    UCP_PROTO_RNDV_CTRL_FLAG_FORCE_SHM_PIPELINE_CHILD = UCS_BIT(0)
+    UCP_PROTO_RNDV_CTRL_FLAG_FORCE_SHM_PIPELINE_CHILD = UCS_BIT(0),
+    UCP_PROTO_RNDV_CTRL_FLAG_FORCE_CUDA_FRAG_CHILD    = UCS_BIT(1)
 };
 
 
@@ -36,6 +40,52 @@ ucp_proto_rndv_rts_tag_op_flags(ucp_rndv_rts_opcode_t opcode)
 {
     return (opcode == UCP_RNDV_RTS_TAG_OK) ?
            UCP_PROTO_SELECT_OP_FLAG_TAG_RNDV : 0;
+}
+
+
+static UCS_F_ALWAYS_INLINE int
+ucp_proto_rndv_staging_force_enabled(ucp_context_h context)
+{
+    const ucp_context_config_t *cfg = &context->config.ext;
+
+    return cfg->proto_enable && cfg->rndv_shm_ppln_enable &&
+           (cfg->rndv_mode == UCP_RNDV_MODE_AUTO) &&
+           (cfg->rndv_shm_cuda_staging_force ||
+            cfg->rndv_pipeline_host_cuda_staging_force);
+}
+
+
+static UCS_F_ALWAYS_INLINE int
+ucp_proto_rndv_host_cuda_staging_force(
+        const ucp_proto_init_params_t *init_params)
+{
+    const ucp_context_config_t *cfg = &init_params->worker->context->config.ext;
+    ucs_memory_type_t local_type =
+            (ucs_memory_type_t)init_params->select_param->mem_type;
+    ucs_memory_type_t remote_type;
+
+    if (!ucp_proto_rndv_staging_force_enabled(init_params->worker->context) ||
+        !cfg->rndv_pipeline_host_cuda_staging_force) {
+        return 0;
+    }
+
+    if (!(ucp_proto_select_op_flags(init_params->select_param) &
+          UCP_PROTO_SELECT_OP_FLAG_TAG_RNDV)) {
+        return 0;
+    }
+
+    if (!ucp_proto_init_check_op(init_params, UCP_PROTO_RNDV_OP_ID_MASK) ||
+        (init_params->rkey_config_key == NULL) ||
+        !(cfg->rndv_frag_mem_types & UCS_BIT(UCS_MEMORY_TYPE_CUDA))) {
+        return 0;
+    }
+
+    remote_type = init_params->rkey_config_key->mem_type;
+    return ((local_type == UCS_MEMORY_TYPE_HOST) &&
+            ((remote_type == UCS_MEMORY_TYPE_HOST) ||
+             (remote_type == UCS_MEMORY_TYPE_CUDA))) ||
+           ((local_type == UCS_MEMORY_TYPE_CUDA) &&
+            (remote_type == UCS_MEMORY_TYPE_HOST));
 }
 
 

@@ -306,6 +306,72 @@ protected:
 };
 
 class test_ucp_proto_rndv_force_cuda : public test_ucp_proto {
+protected:
+    bool should_force_host_cuda_pair(
+            ucs_memory_type_t local_mem_type,
+            ucs_memory_type_t remote_mem_type,
+            uint8_t rndv_op_flag = UCP_PROTO_SELECT_OP_FLAG_TAG_RNDV,
+            uint64_t ep_config_flags = UCP_EP_CONFIG_KEY_FLAG_INTRA_NODE,
+            int proto_enable = -1)
+    {
+        ucp_worker_cfg_index_t ep_cfg_index = sender().ep()->cfg_index;
+        ucp_rkey_config_key_t rkey_config_key = create_rkey_config_key(0);
+        ucp_worker_cfg_index_t rkey_cfg_index;
+        ucp_proto_select_param_t select_param;
+        ucp_ep_config_key_t ep_config_key;
+        ucp_memory_info_t mem_info = {
+            .type    = static_cast<uint8_t>(local_mem_type),
+            .sys_dev = UCS_SYS_DEVICE_ID_UNKNOWN,
+            .flags   = UCS_MEM_FLAG_REGISTRABLE
+        };
+        const ucp_proto_threshold_elem_t *threshold;
+        ucp_proto_init_params_t init_params;
+        int original_proto_enable;
+        int force;
+        ucs_status_t status;
+
+        threshold = select_rndv_send_protocol(rndv_op_flag, local_mem_type,
+                                              remote_mem_type);
+        if (threshold == nullptr) {
+            return false;
+        }
+
+        rkey_config_key.ep_cfg_index = ep_cfg_index;
+        rkey_config_key.mem_type     = remote_mem_type;
+        status = ucp_worker_rkey_config_get(worker(), &rkey_config_key, NULL,
+                                            &rkey_cfg_index);
+        EXPECT_UCS_OK(status);
+        if (status != UCS_OK) {
+            return false;
+        }
+
+        ucp_proto_select_param_init(&select_param, UCP_OP_ID_RNDV_SEND, 0,
+                                    rndv_op_flag, UCP_DATATYPE_CONTIG,
+                                    &mem_info, 1);
+        ep_config_key       = ucs_array_elem(&worker()->ep_config,
+                                             ep_cfg_index).key;
+        ep_config_key.flags = ep_config_flags;
+        init_params = {
+            .worker          = worker(),
+            .select_param    = &select_param,
+            .ep_cfg_index    = ep_cfg_index,
+            .rkey_cfg_index  = rkey_cfg_index,
+            .ep_config_key   = &ep_config_key,
+            .rkey_config_key = &ucs_array_elem(&worker()->rkey_config,
+                                                rkey_cfg_index).key,
+            .proto_id        = 0,
+            .ctx             = NULL
+        };
+
+        original_proto_enable = context()->config.ext.proto_enable;
+        if (proto_enable >= 0) {
+            context()->config.ext.proto_enable = proto_enable;
+        }
+
+        force = ucp_proto_rndv_host_cuda_staging_force(&init_params);
+        context()->config.ext.proto_enable = original_proto_enable;
+        return force;
+    }
 };
 
 class test_ucp_proto_rma_rndv : public test_ucp_proto {
@@ -683,6 +749,65 @@ UCS_TEST_P(test_ucp_proto_rndv_force_cuda,
     ASSERT_NE(nullptr, threshold);
     info = threshold_protocol_info(threshold, UCS_MBYTE);
     EXPECT_EQ(std::string::npos, info.find("rndv_send(tag-rndv)")) << info;
+}
+
+UCS_TEST_P(test_ucp_proto_rndv_force_cuda, rndv_force_host_cuda_scope,
+           "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
+           "RNDV_FRAG_MEM_TYPES=cuda")
+{
+    const std::pair<ucs_memory_type_t, ucs_memory_type_t> pairs[] = {
+        {UCS_MEMORY_TYPE_HOST, UCS_MEMORY_TYPE_HOST},
+        {UCS_MEMORY_TYPE_HOST, UCS_MEMORY_TYPE_CUDA},
+        {UCS_MEMORY_TYPE_CUDA, UCS_MEMORY_TYPE_HOST}
+    };
+
+    for (auto pair : pairs) {
+        EXPECT_TRUE(should_force_host_cuda_pair(pair.first, pair.second));
+    }
+
+    EXPECT_FALSE(should_force_host_cuda_pair(UCS_MEMORY_TYPE_CUDA,
+                                             UCS_MEMORY_TYPE_CUDA));
+    EXPECT_FALSE(should_force_host_cuda_pair(UCS_MEMORY_TYPE_HOST,
+                                             UCS_MEMORY_TYPE_CUDA, 0));
+}
+
+UCS_TEST_P(test_ucp_proto_rndv_force_cuda,
+           rndv_force_host_cuda_is_not_intra_node_only,
+           "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
+           "RNDV_FRAG_MEM_TYPES=cuda")
+{
+    EXPECT_TRUE(should_force_host_cuda_pair(UCS_MEMORY_TYPE_HOST,
+                                            UCS_MEMORY_TYPE_CUDA,
+                                            UCP_PROTO_SELECT_OP_FLAG_TAG_RNDV,
+                                            0));
+}
+
+UCS_TEST_P(test_ucp_proto_rndv_force_cuda, rndv_force_host_cuda_proto_v1,
+           "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
+           "RNDV_FRAG_MEM_TYPES=cuda")
+{
+    EXPECT_FALSE(should_force_host_cuda_pair(UCS_MEMORY_TYPE_HOST,
+                                             UCS_MEMORY_TYPE_CUDA,
+                                             UCP_PROTO_SELECT_OP_FLAG_TAG_RNDV,
+                                             UCP_EP_CONFIG_KEY_FLAG_INTRA_NODE,
+                                             0));
+}
+
+UCS_TEST_P(test_ucp_proto_rndv_force_cuda, rndv_force_host_cuda_get_zcopy,
+           "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
+           "RNDV_FRAG_MEM_TYPES=cuda", "RNDV_SCHEME=get_zcopy")
+{
+    EXPECT_FALSE(should_force_host_cuda_pair(UCS_MEMORY_TYPE_HOST,
+                                             UCS_MEMORY_TYPE_CUDA));
+}
+
+UCS_TEST_P(test_ucp_proto_rndv_force_cuda,
+           rndv_force_host_cuda_without_cuda_fragments,
+           "RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y",
+           "RNDV_FRAG_MEM_TYPES=host")
+{
+    EXPECT_FALSE(should_force_host_cuda_pair(UCS_MEMORY_TYPE_HOST,
+                                             UCS_MEMORY_TYPE_CUDA));
 }
 
 UCS_TEST_P(test_ucp_proto, rndv_ppln_preserves_tag_rndv_op_flag)

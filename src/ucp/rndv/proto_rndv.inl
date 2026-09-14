@@ -20,11 +20,8 @@
 static UCS_F_ALWAYS_INLINE int
 ucp_proto_rndv_shm_pipeline_force_enabled(ucp_context_h context)
 {
-    const ucp_context_config_t *cfg = &context->config.ext;
-
-    return cfg->rndv_shm_cuda_staging_force &&
-           cfg->rndv_shm_ppln_enable &&
-           cfg->rndv_mode == UCP_RNDV_MODE_AUTO;
+    return context->config.ext.rndv_shm_cuda_staging_force &&
+           ucp_proto_rndv_staging_force_enabled(context);
 }
 
 static UCS_F_ALWAYS_INLINE int

@@ -128,6 +128,8 @@ typedef struct ucp_context_config {
     int                                    rndv_shm_ppln_enable;
     /** Force intra-node CUDA staging when rendezvous scheme is automatic */
     int                                    rndv_shm_cuda_staging_force;
+    /** Force CUDA staging for host-involved tag rendezvous */
+    int                                    rndv_pipeline_host_cuda_staging_force;
     /** Enable error handling for rndv pipeline protocol */
     int                                    rndv_errh_ppln_enable;
     /** Force-enable the RMA rendezvous put/get protocols */
