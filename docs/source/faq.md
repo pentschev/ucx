@@ -488,8 +488,10 @@ UCX_PROTO_INFO=y \
 UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
 UCX_RNDV_FRAG_MEM_TYPES=cuda \
 UCX_RNDV_FRAG_WORKER_MAX_MEM=256M \
-./src/tools/perf/ucx_perftest -t tag_bw -m host,host <server-hostname>
+./src/tools/perf/ucx_perftest -t tag_bw -m host,host SERVER_HOSTNAME
 ```
+
+Replace `SERVER_HOSTNAME` with the server hostname.
 
 Use `-m host,cuda` and `-m cuda,host` to exercise the asymmetric directions.
 `UCX_PROTO_INFO=y` must show both `frag cuda` and `cuda_ipc`; otherwise UCX
@@ -498,8 +500,28 @@ selected the documented fallback.
 For cross-node MNNVL testing, enable CUDA IPC MNNVL support on both peers:
 
 ```sh
+UCX_TLS=rc,cuda_copy,cuda_ipc \
+UCX_PROTO_ENABLE=y \
+UCX_PROTO_INFO=y \
+UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
+UCX_RNDV_FRAG_MEM_TYPES=cuda \
+UCX_RNDV_FRAG_WORKER_MAX_MEM=256M \
 UCX_CUDA_IPC_ENABLE_MNNVL=y \
-./src/tools/perf/ucx_perftest -t tag_bw -m host,host <server-hostname>
+./src/tools/perf/ucx_perftest -t tag_bw -m host,host
+```
+
+Run the client with the same environment and command, followed by the server
+hostname:
+
+```sh
+UCX_TLS=rc,cuda_copy,cuda_ipc \
+UCX_PROTO_ENABLE=y \
+UCX_PROTO_INFO=y \
+UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
+UCX_RNDV_FRAG_MEM_TYPES=cuda \
+UCX_RNDV_FRAG_WORKER_MAX_MEM=256M \
+UCX_CUDA_IPC_ENABLE_MNNVL=y \
+./src/tools/perf/ucx_perftest -t tag_bw -m host,host SERVER_HOSTNAME
 ```
 
 Both peers also require CUDA IPC MNNVL/fabric support and a configured NVIDIA
