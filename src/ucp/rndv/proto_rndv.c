@@ -429,6 +429,44 @@ void ucp_proto_rndv_set_variant_config(
     ucp_request_progress_wrapper_init(init_params->worker, proto_config);
 }
 
+static int ucp_proto_rndv_ctrl_variant_has_cuda_ipc_child(
+        const ucp_proto_rndv_ctrl_init_params_t *params,
+        const ucp_proto_config_t *remote_proto_config)
+{
+    ucp_worker_h worker       = params->super.super.worker;
+    ucp_context_h context     = worker->context;
+    const ucp_ep_config_t *ep_config = ucp_worker_ep_config(
+            worker, remote_proto_config->ep_cfg_index);
+    const uct_md_attr_v2_t *md_attr;
+    ucp_proto_query_attr_t proto_attr;
+    ucp_rsc_index_t rsc_index;
+    ucp_md_index_t md_index;
+    ucp_lane_index_t lane;
+
+    /* Query the actual candidate instead of inferring CUDA IPC availability
+     * from endpoint locality. This preserves all reachability and memory
+     * exportability decisions made while selecting its child protocol. */
+    ucp_proto_config_query(worker, remote_proto_config,
+                           ucs_max(params->super.min_length, 1ul), &proto_attr);
+    ucs_for_each_bit(lane, proto_attr.lane_map) {
+        rsc_index = ep_config->key.lanes[lane].rsc_index;
+        if (rsc_index == UCP_NULL_RESOURCE) {
+            continue;
+        }
+
+        md_index = context->tl_rscs[rsc_index].md_index;
+        md_attr  = &context->tl_mds[md_index].attr;
+        if ((md_attr->flags & UCT_MD_FLAG_IPC_MEMTYPE_COPY) &&
+            (md_attr->access_mem_types & UCS_BIT(UCS_MEMORY_TYPE_CUDA)) &&
+            !ucp_proto_rndv_ctrl_skip_inter_node_md(&params->super,
+                                                     md_attr)) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 /* Probe a rndv_ctrl variant with a given remote protocol */
 static void ucp_proto_rndv_ctrl_variant_probe(
         const ucp_proto_rndv_ctrl_init_params_t *params,
@@ -443,6 +481,7 @@ static void ucp_proto_rndv_ctrl_variant_probe(
     ucp_proto_perf_t *ctrl_perf, *remote_perf;
     UCS_STRING_BUFFER_ONSTACK(perf_name_buf, 256);
     size_t cfg_thresh, cfg_priority;
+    int cuda_ipc_child;
     int force_cuda_frag;
     int force_shm_pipeline;
     ucs_linear_func_t overhead;
@@ -505,6 +544,9 @@ static void ucp_proto_rndv_ctrl_variant_probe(
     force_shm_pipeline = ucp_proto_rndv_shm_pipeline_force(&params->super.super);
     force_cuda_frag    = ucp_proto_rndv_host_cuda_staging_force(
             &params->super.super);
+    cuda_ipc_child     = !force_cuda_frag ||
+                         ucp_proto_rndv_ctrl_variant_has_cuda_ipc_child(
+                                 params, &rpriv->remote_proto_config);
     if ((context->config.ext.rndv_mode != UCP_RNDV_MODE_AUTO) &&
         !(params->flags & UCP_PROTO_RNDV_CTRL_FLAG_FORCE_SHM_PIPELINE_CHILD) &&
         (remote_proto->cfg_thresh != UCS_MEMUNITS_AUTO)) {
@@ -516,10 +558,10 @@ static void ucp_proto_rndv_ctrl_variant_probe(
 
     cfg_priority = ucp_proto_rndv_ctrl_variant_cfg_priority(
             params, remote_proto->cfg_thresh, remote_proto->cfg_priority,
-            force_shm_pipeline || force_cuda_frag);
+            force_shm_pipeline || (force_cuda_frag && cuda_ipc_child));
     cfg_thresh = ucp_proto_rndv_ctrl_variant_cfg_thresh(
             params, remote_proto->cfg_thresh, force_shm_pipeline,
-            force_cuda_frag);
+            force_cuda_frag, cuda_ipc_child);
 
     if (fabs(params->perf_bias) > UCP_PROTO_PERF_EPSILON) {
         ucp_proto_perf_apply_func(perf,

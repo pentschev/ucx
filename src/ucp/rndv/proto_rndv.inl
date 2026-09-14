@@ -167,7 +167,7 @@ static UCS_F_ALWAYS_INLINE size_t
 ucp_proto_rndv_ctrl_variant_cfg_thresh(
         const ucp_proto_rndv_ctrl_init_params_t *params,
         size_t remote_cfg_thresh, int force_shm_pipeline,
-        int force_cuda_frag)
+        int force_cuda_frag, int cuda_ipc_child)
 {
     if (force_shm_pipeline) {
         return ((params->flags &
@@ -179,6 +179,7 @@ ucp_proto_rndv_ctrl_variant_cfg_thresh(
     if (force_cuda_frag) {
         return ((params->flags &
                  UCP_PROTO_RNDV_CTRL_FLAG_FORCE_CUDA_FRAG_CHILD) &&
+                cuda_ipc_child &&
                 (remote_cfg_thresh != UCS_MEMUNITS_INF)) ?
                remote_cfg_thresh : UCS_MEMUNITS_INF;
     }

@@ -164,7 +164,7 @@ static void ucp_tag_rndv_rts_probe(const ucp_proto_init_params_t *init_params)
     }
 
     context         = init_params->worker->context;
-    remote_op_flags = ucp_proto_rndv_shm_pipeline_force_enabled(context) ?
+    remote_op_flags = ucp_proto_rndv_staging_force_enabled(context) ?
                       UCP_PROTO_SELECT_OP_FLAG_TAG_RNDV : 0;
     ucp_proto_rndv_rts_probe(init_params, remote_op_flags);
 }

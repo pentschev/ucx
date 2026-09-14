@@ -184,8 +184,7 @@ ucp_tag_rndv_offload_sw_proto_probe(const ucp_proto_init_params_t *init_params)
         .super.reg_mem_info  = ucp_proto_common_select_param_mem_info(
                                                      init_params->select_param),
         .remote_op_id        = UCP_OP_ID_RNDV_RECV,
-        .remote_op_flags     = ucp_proto_rndv_shm_pipeline_force_enabled(
-                                       context) ?
+        .remote_op_flags     = ucp_proto_rndv_staging_force_enabled(context) ?
                                UCP_PROTO_SELECT_OP_FLAG_TAG_RNDV : 0,
         .flags               = 0,
         .lane                = init_params->ep_config_key->tag_lane,
