@@ -95,18 +95,14 @@ ucp_proto_rndv_ctrl_init_flags(
 {
     const ucp_proto_init_params_t *init_params = &params->super.super;
 
-    /* Check that this control protocol selects a pipeline fragment. */
-    if (!(ucp_proto_select_op_flags(init_params->select_param) &
-          UCP_PROTO_SELECT_OP_FLAG_PPLN_FRAG)) {
-        return 0;
-    }
-
     /* Check that the protocol threshold is selected automatically. */
     if (params->super.cfg_thresh != UCS_MEMUNITS_AUTO) {
         return 0;
     }
 
     if (ucp_proto_rndv_shm_pipeline_force(init_params) &&
+        (ucp_proto_select_op_flags(init_params->select_param) &
+         UCP_PROTO_SELECT_OP_FLAG_PPLN_FRAG) &&
         (ucp_proto_select_op_id(init_params->select_param) ==
          UCP_OP_ID_RNDV_RECV) &&
         (params->super.reg_mem_info.type == UCS_MEMORY_TYPE_HOST)) {
@@ -114,7 +110,10 @@ ucp_proto_rndv_ctrl_init_flags(
     }
 
     if (ucp_proto_rndv_host_cuda_staging_force(init_params) &&
-        (params->super.reg_mem_info.type == UCS_MEMORY_TYPE_CUDA)) {
+        (params->super.reg_mem_info.type == UCS_MEMORY_TYPE_CUDA) &&
+        ((ucp_proto_select_op_flags(init_params->select_param) &
+          UCP_PROTO_SELECT_OP_FLAG_PPLN_FRAG) ||
+         ucp_proto_rndv_host_cuda_staging_sender_frag(init_params))) {
         return UCP_PROTO_RNDV_CTRL_FLAG_FORCE_CUDA_FRAG_CHILD;
     }
 
@@ -136,6 +135,12 @@ ucp_proto_rndv_cfg_thresh(const ucp_proto_init_params_t *init_params,
     }
 
     if (ucp_proto_rndv_host_cuda_staging_force(init_params)) {
+        if (ucp_proto_rndv_host_cuda_staging_sender_frag(init_params)) {
+            return (rndv_modes & (UCS_BIT(UCP_RNDV_MODE_PUT_ZCOPY) |
+                                  UCS_BIT(UCP_RNDV_MODE_AM))) ?
+                   UCS_MEMUNITS_AUTO : UCS_MEMUNITS_INF;
+        }
+
         return (rndv_modes & UCS_BIT(UCP_RNDV_MODE_PUT_PIPELINE)) ?
                UCS_MEMUNITS_AUTO : UCS_MEMUNITS_INF;
     }

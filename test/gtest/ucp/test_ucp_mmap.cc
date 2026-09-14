@@ -1043,6 +1043,10 @@ UCS_TEST_P(test_ucp_mmap, rndv_mpool_quota_exhausted,
     ucp_mem_desc_t *mdesc3;
     ucp_worker_h worker = sender().worker();
 
+    if (!is_proto_enabled()) {
+        UCS_TEST_SKIP_R("requires proto v2 rendezvous fragment quota");
+    }
+
     ASSERT_UCS_OK(ucp_rndv_mpool_get(worker, UCS_MEMORY_TYPE_HOST,
                                      UCS_SYS_DEVICE_ID_UNKNOWN, &mdesc1));
     ASSERT_UCS_OK(ucp_rndv_mpool_get(worker, UCS_MEMORY_TYPE_HOST,
@@ -1053,6 +1057,39 @@ UCS_TEST_P(test_ucp_mmap, rndv_mpool_quota_exhausted,
 
     ucs_mpool_put(mdesc2);
     ucs_mpool_put(mdesc1);
+}
+
+UCS_TEST_P(test_ucp_mmap, rndv_mpool_reserved_capacity,
+           "PROTO_ENABLE=y", "RNDV_FRAG_SIZE=host:4K",
+           "RNDV_FRAG_ALLOC_COUNT=host:2",
+           "RNDV_FRAG_WORKER_MAX_MEM=8K")
+{
+    ucp_worker_h worker = sender().worker();
+    ucp_mem_desc_t *reserved_mdesc;
+    ucp_mem_desc_t *normal_mdesc;
+    ucp_mem_desc_t *extra_mdesc;
+
+    if (!is_proto_enabled()) {
+        UCS_TEST_SKIP_R("requires proto v2 rendezvous fragment quota");
+    }
+
+    ASSERT_UCS_OK(ucp_rndv_mpool_get_with_reserve(
+            worker, UCS_MEMORY_TYPE_HOST, UCS_SYS_DEVICE_ID_UNKNOWN, 1,
+            &reserved_mdesc));
+    EXPECT_EQ(UCS_ERR_NO_RESOURCE,
+              ucp_rndv_mpool_get_with_reserve(
+                      worker, UCS_MEMORY_TYPE_HOST,
+                      UCS_SYS_DEVICE_ID_UNKNOWN, 1, &extra_mdesc));
+
+    ASSERT_UCS_OK(ucp_rndv_mpool_get(worker, UCS_MEMORY_TYPE_HOST,
+                                     UCS_SYS_DEVICE_ID_UNKNOWN,
+                                     &normal_mdesc));
+    EXPECT_EQ(UCS_ERR_NO_RESOURCE,
+              ucp_rndv_mpool_get(worker, UCS_MEMORY_TYPE_HOST,
+                                 UCS_SYS_DEVICE_ID_UNKNOWN, &extra_mdesc));
+
+    ucs_mpool_put(normal_mdesc);
+    ucp_rndv_mpool_put_with_reserve(reserved_mdesc);
 }
 
 UCS_TEST_P(test_ucp_mmap, rndv_mpool_quota_disabled_with_proto_v1,

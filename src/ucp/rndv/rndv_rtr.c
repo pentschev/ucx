@@ -39,6 +39,7 @@ typedef struct {
     ucp_proto_rndv_rtr_priv_t super;
     ucs_memory_type_t         frag_mem_type;
     ucs_sys_device_t          frag_sys_dev;
+    unsigned                  reserve;
 } ucp_proto_rndv_rtr_mtype_priv_t;
 
 
@@ -272,6 +273,7 @@ static void ucp_proto_rndv_rtr_probe(const ucp_proto_init_params_t *init_params)
     }
     rpriv.data_received = ucp_proto_rndv_rtr_data_received;
 
+    params.flags = ucp_proto_rndv_ctrl_init_flags(&params);
     ucp_proto_rndv_ctrl_probe(&params, &rpriv, sizeof(rpriv));
 }
 
@@ -359,8 +361,11 @@ static size_t ucp_proto_rndv_rtr_mtype_pack(void *dest, void *arg)
 static UCS_F_ALWAYS_INLINE void
 ucp_proto_rndv_rtr_mtype_complete(ucp_request_t *req, int abort)
 {
+    const ucp_proto_rndv_rtr_mtype_priv_t *rpriv =
+            req->send.proto_config->priv;
+
     if (!abort || (req->flags & UCP_REQUEST_FLAG_PROTO_INITIALIZED)) {
-        ucp_proto_rndv_mtype_mdesc_release(req);
+        ucp_proto_rndv_mtype_mdesc_release(req, rpriv->reserve);
     }
 
     if (ucp_proto_rndv_request_is_ppln_frag(req)) {
@@ -392,7 +397,10 @@ ucp_proto_rndv_rtr_mtype_abort(ucp_request_t *req, ucs_status_t status)
 static ucs_status_t ucp_proto_rndv_rtr_mtype_reset(ucp_request_t *req)
 {
     if (req->flags & UCP_REQUEST_FLAG_PROTO_INITIALIZED) {
-        ucp_proto_rndv_mtype_mdesc_release(req);
+        const ucp_proto_rndv_rtr_mtype_priv_t *rpriv =
+                req->send.proto_config->priv;
+
+        ucp_proto_rndv_mtype_mdesc_release(req, rpriv->reserve);
     }
 
     return ucp_proto_request_zcopy_id_reset(req);
@@ -435,7 +443,8 @@ static ucs_status_t ucp_proto_rndv_rtr_mtype_progress(uct_pending_req_t *self)
          * the request is queued and will be rescheduled later. */
         status = ucp_proto_rndv_mtype_request_init(req, rpriv->frag_mem_type,
                                                    rpriv->frag_sys_dev,
-                                                   UCP_WORKER_RNDV_FC_OP_RTR);
+                                                   UCP_WORKER_RNDV_FC_OP_RTR,
+                                                   rpriv->reserve);
         if (status == UCS_ERR_NO_RESOURCE) {
             return UCS_OK;
         }
@@ -493,6 +502,8 @@ ucp_proto_rndv_rtr_mtype_probe(const ucp_proto_init_params_t *init_params)
     ucp_proto_rndv_rtr_mtype_priv_t rpriv;
     ucp_md_map_t dummy_md_map;
     ucp_md_index_t md_index;
+    unsigned max_elems;
+    int reserve_put_frag;
     ucs_status_t status;
 
     if (!ucp_proto_rndv_op_check(init_params, UCP_OP_ID_RNDV_RECV, 1) ||
@@ -501,6 +512,18 @@ ucp_proto_rndv_rtr_mtype_probe(const ucp_proto_init_params_t *init_params)
     }
 
     ucs_for_each_bit(frag_mem_type, context->config.ext.rndv_frag_mem_types) {
+        reserve_put_frag =
+                (frag_mem_type == UCS_MEMORY_TYPE_CUDA) &&
+                ucp_proto_rndv_host_cuda_staging_candidate(init_params) &&
+                (init_params->select_param->mem_type ==
+                 UCS_MEMORY_TYPE_HOST) &&
+                (init_params->rkey_config_key->mem_type ==
+                 UCS_MEMORY_TYPE_HOST);
+        max_elems = ucp_proto_rndv_frag_max_elems(context, frag_mem_type);
+        if (reserve_put_frag && (max_elems <= 1)) {
+            continue;
+        }
+
         status = ucp_proto_rndv_mtype_init(init_params, frag_mem_type,
                                            &dummy_md_map,
                                            &params.super.max_length);
@@ -540,6 +563,7 @@ ucp_proto_rndv_rtr_mtype_probe(const ucp_proto_init_params_t *init_params)
         rpriv.super.data_received = ucp_proto_rndv_rtr_mtype_data_received;
         rpriv.frag_mem_type       = frag_mem_type;
         rpriv.frag_sys_dev        = params.super.reg_mem_info.sys_dev;
+        rpriv.reserve             = reserve_put_frag && (max_elems != UINT_MAX);
         params.flags              = ucp_proto_rndv_ctrl_init_flags(&params);
 
         ucp_proto_rndv_ctrl_probe(&params, &rpriv, sizeof(rpriv));

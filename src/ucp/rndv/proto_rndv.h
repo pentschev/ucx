@@ -55,8 +55,14 @@ ucp_proto_rndv_staging_force_enabled(ucp_context_h context)
 }
 
 
+/* Convert UCX_RNDV_FRAG_WORKER_MAX_MEM to mpool max_elems (frag count), or
+ * UINT_MAX if unlimited. */
+unsigned ucp_proto_rndv_frag_max_elems(ucp_context_h context,
+                                      ucs_memory_type_t frag_mem_type);
+
+
 static UCS_F_ALWAYS_INLINE int
-ucp_proto_rndv_host_cuda_staging_force(
+ucp_proto_rndv_host_cuda_staging_candidate(
         const ucp_proto_init_params_t *init_params)
 {
     const ucp_context_config_t *cfg = &init_params->worker->context->config.ext;
@@ -86,6 +92,33 @@ ucp_proto_rndv_host_cuda_staging_force(
              (remote_type == UCS_MEMORY_TYPE_CUDA))) ||
            ((local_type == UCS_MEMORY_TYPE_CUDA) &&
             (remote_type == UCS_MEMORY_TYPE_HOST));
+}
+
+
+static UCS_F_ALWAYS_INLINE int
+ucp_proto_rndv_host_cuda_staging_force(
+        const ucp_proto_init_params_t *init_params)
+{
+    if (!ucp_proto_rndv_host_cuda_staging_candidate(init_params)) {
+        return 0;
+    }
+
+    return (init_params->select_param->mem_type != UCS_MEMORY_TYPE_HOST) ||
+           (init_params->rkey_config_key->mem_type != UCS_MEMORY_TYPE_HOST) ||
+           (ucp_proto_rndv_frag_max_elems(init_params->worker->context,
+                                          UCS_MEMORY_TYPE_CUDA) > 1);
+}
+
+
+static UCS_F_ALWAYS_INLINE int
+ucp_proto_rndv_host_cuda_staging_sender_frag(
+        const ucp_proto_init_params_t *init_params)
+{
+    return ucp_proto_rndv_host_cuda_staging_force(init_params) &&
+           (ucp_proto_select_op_id(init_params->select_param) ==
+            UCP_OP_ID_RNDV_RECV) &&
+           (init_params->select_param->mem_type == UCS_MEMORY_TYPE_CUDA) &&
+           (init_params->rkey_config_key->mem_type == UCS_MEMORY_TYPE_HOST);
 }
 
 
@@ -241,12 +274,6 @@ void ucp_proto_rndv_rts_query(const ucp_proto_query_params_t *params,
 void ucp_proto_rndv_rts_abort(ucp_request_t *req, ucs_status_t status);
 
 ucs_status_t ucp_proto_rndv_rts_reset(ucp_request_t *req);
-
-
-/* Convert UCX_RNDV_FRAG_WORKER_MAX_MEM to mpool max_elems (frag count), or
- * UINT_MAX if unlimited. */
-unsigned ucp_proto_rndv_frag_max_elems(ucp_context_h context,
-                                      ucs_memory_type_t frag_mem_type);
 
 
 ucs_status_t

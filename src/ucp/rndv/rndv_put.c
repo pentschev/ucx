@@ -532,7 +532,7 @@ ucp_proto_rndv_put_mtype_copy_progress(uct_pending_req_t *uct_req)
      * the request is queued and will be rescheduled later. */
     status = ucp_proto_rndv_mtype_request_init(req, rpriv->bulk.frag_mem_type,
                                                rpriv->bulk.frag_sys_dev,
-                                               UCP_WORKER_RNDV_FC_OP_PUT);
+                                               UCP_WORKER_RNDV_FC_OP_PUT, 0);
     if (status == UCS_ERR_NO_RESOURCE) {
         return UCS_OK;
     }
@@ -573,7 +573,7 @@ static void ucp_proto_rndv_put_mtype_completion(uct_completion_t *uct_comp)
 
     ucp_trace_req(req, "rndv_put_mtype_completion");
     if (req->flags & UCP_REQUEST_FLAG_PROTO_INITIALIZED) {
-        ucp_proto_rndv_mtype_mdesc_release(req);
+        ucp_proto_rndv_mtype_mdesc_release(req, 0);
     }
 
     ucp_proto_rndv_put_common_complete(req);
@@ -586,7 +586,7 @@ static void ucp_proto_rndv_put_mtype_frag_completion(uct_completion_t *uct_comp)
 
     ucp_trace_req(req, "rndv_put_mtype_frag_completion");
     if (req->flags & UCP_REQUEST_FLAG_PROTO_INITIALIZED) {
-        ucp_proto_rndv_mtype_mdesc_release(req);
+        ucp_proto_rndv_mtype_mdesc_release(req, 0);
     }
 
     ucp_proto_rndv_ppln_send_frag_complete(req, 1);

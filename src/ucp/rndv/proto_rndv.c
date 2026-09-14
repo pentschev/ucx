@@ -433,9 +433,9 @@ static int ucp_proto_rndv_ctrl_variant_has_cuda_ipc_child(
         const ucp_proto_rndv_ctrl_init_params_t *params,
         const ucp_proto_config_t *remote_proto_config)
 {
-    ucp_worker_h worker       = params->super.super.worker;
-    ucp_context_h context     = worker->context;
-    const ucp_ep_config_t *ep_config = ucp_worker_ep_config(
+    ucp_worker_h worker                   = params->super.super.worker;
+    ucp_context_h context                 = worker->context;
+    const ucp_ep_config_t *ep_config      = ucp_worker_ep_config(
             worker, remote_proto_config->ep_cfg_index);
     const uct_md_attr_v2_t *md_attr;
     ucp_proto_query_attr_t proto_attr;

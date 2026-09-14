@@ -273,7 +273,7 @@ ucp_proto_rndv_get_mtype_unpack_completion(uct_completion_t *uct_comp)
     ucp_request_t *req = ucs_container_of(uct_comp, ucp_request_t,
                                           send.state.uct_comp);
 
-    ucp_proto_rndv_mtype_mdesc_release(req);
+    ucp_proto_rndv_mtype_mdesc_release(req, 0);
 
     if (ucp_proto_rndv_request_is_ppln_frag(req)) {
         ucp_proto_rndv_ppln_recv_frag_complete(req, 1, 0);
@@ -309,7 +309,8 @@ ucp_proto_rndv_get_mtype_fetch_progress(uct_pending_req_t *uct_req)
          * the request is queued and will be rescheduled later. */
         status = ucp_proto_rndv_mtype_request_init(req, rpriv->frag_mem_type,
                                                    rpriv->frag_sys_dev,
-                                                   UCP_WORKER_RNDV_FC_OP_GET);
+                                                   UCP_WORKER_RNDV_FC_OP_GET,
+                                                   0);
         if (status == UCS_ERR_NO_RESOURCE) {
             return UCS_OK;
         }
@@ -380,7 +381,7 @@ static ucs_status_t ucp_proto_rndv_get_mtype_reset(ucp_request_t *req)
         return UCS_OK;
     }
 
-    ucp_proto_rndv_mtype_mdesc_release(req);
+    ucp_proto_rndv_mtype_mdesc_release(req, 0);
     req->flags          &= ~UCP_REQUEST_FLAG_PROTO_INITIALIZED;
 
     if ((req->send.proto_stage != UCP_PROTO_RNDV_GET_STAGE_FETCH) &&

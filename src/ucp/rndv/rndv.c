@@ -1200,10 +1200,11 @@ ucp_rndv_mpool_get(ucp_worker_h worker, ucs_memory_type_t mem_type,
         goto err;
     }
 
-    mpriv           = ucs_mpool_priv(mpool);
-    mpriv->worker   = worker;
-    mpriv->mem_type = key.mem_type;
-    mpriv->sys_dev  = sys_dev;
+    mpriv                       = ucs_mpool_priv(mpool);
+    mpriv->worker              = worker;
+    mpriv->mem_type            = key.mem_type;
+    mpriv->sys_dev             = sys_dev;
+    mpriv->num_reserve_limited = 0;
 
 out_mp_get:
     mdesc = ucp_worker_mpool_get(mpool);
@@ -1219,6 +1220,50 @@ out_mp_get:
 
 err:
     return status;
+}
+
+ucs_status_t
+ucp_rndv_mpool_get_with_reserve(ucp_worker_h worker,
+                                ucs_memory_type_t mem_type,
+                                ucs_sys_device_t sys_dev, unsigned reserve,
+                                ucp_mem_desc_t **mdesc_p)
+{
+    unsigned max_elems = ucp_proto_rndv_frag_max_elems(worker->context,
+                                                       mem_type);
+    ucp_rndv_mpool_priv_t *mpriv;
+    ucp_mem_desc_t *mdesc;
+    ucs_mpool_t *mpool;
+    ucs_status_t status;
+
+    if (max_elems <= reserve) {
+        return UCS_ERR_NO_RESOURCE;
+    }
+
+    status = ucp_rndv_mpool_get(worker, mem_type, sys_dev, &mdesc);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    mpool = ucs_mpool_obj_owner(mdesc);
+    mpriv = ucs_mpool_priv(mpool);
+    if (mpriv->num_reserve_limited >= (max_elems - reserve)) {
+        ucs_mpool_put_inline(mdesc);
+        return UCS_ERR_NO_RESOURCE;
+    }
+
+    ++mpriv->num_reserve_limited;
+    *mdesc_p = mdesc;
+    return UCS_OK;
+}
+
+void ucp_rndv_mpool_put_with_reserve(ucp_mem_desc_t *mdesc)
+{
+    ucs_mpool_t *mpool           = ucs_mpool_obj_owner(mdesc);
+    ucp_rndv_mpool_priv_t *mpriv = ucs_mpool_priv(mpool);
+
+    ucs_assert(mpriv->num_reserve_limited > 0);
+    --mpriv->num_reserve_limited;
+    ucs_mpool_put_inline(mdesc);
 }
 
 static void ucp_rndv_send_frag_get_mem_type(ucp_request_t *sreq, size_t length,

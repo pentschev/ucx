@@ -118,6 +118,14 @@ ucs_status_t
 ucp_rndv_mpool_get(ucp_worker_h worker, ucs_memory_type_t mem_type,
                    ucs_sys_device_t sys_dev, ucp_mem_desc_t **mdesc_p);
 
+ucs_status_t
+ucp_rndv_mpool_get_with_reserve(ucp_worker_h worker,
+                                ucs_memory_type_t mem_type,
+                                ucs_sys_device_t sys_dev, unsigned reserve,
+                                ucp_mem_desc_t **mdesc_p);
+
+void ucp_rndv_mpool_put_with_reserve(ucp_mem_desc_t *mdesc);
+
 unsigned ucp_proto_rndv_mtype_fc_reschedule_cb(void *arg);
 
 void ucp_rndv_receive(ucp_worker_h worker, ucp_request_t *rreq,

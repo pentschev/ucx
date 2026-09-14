@@ -48,15 +48,18 @@ static UCS_F_ALWAYS_INLINE ucs_status_t
 ucp_proto_rndv_mtype_request_init(ucp_request_t *req,
                                   ucs_memory_type_t frag_mem_type,
                                   ucs_sys_device_t frag_sys_dev,
-                                  unsigned fc_op)
+                                  unsigned fc_op, unsigned reserve)
 {
     ucp_worker_h worker = req->send.ep->worker;
     ucs_status_t status;
 
     req->send.rndv.mdesc = NULL;
-    status               = ucp_rndv_mpool_get(worker, frag_mem_type,
-                                              frag_sys_dev,
-                                              &req->send.rndv.mdesc);
+    status = (reserve == 0) ?
+             ucp_rndv_mpool_get(worker, frag_mem_type, frag_sys_dev,
+                                &req->send.rndv.mdesc) :
+             ucp_rndv_mpool_get_with_reserve(worker, frag_mem_type,
+                                             frag_sys_dev, reserve,
+                                             &req->send.rndv.mdesc);
     if (status != UCS_ERR_NO_RESOURCE) {
         return status;
     }
@@ -270,9 +273,14 @@ ucp_proto_rndv_mtype_fc_reschedule_pending(ucp_request_t *req)
  * which allocates the mdesc from the mpool.
  */
 static UCS_F_ALWAYS_INLINE void
-ucp_proto_rndv_mtype_mdesc_release(ucp_request_t *req)
+ucp_proto_rndv_mtype_mdesc_release(ucp_request_t *req, unsigned reserve)
 {
-    ucs_mpool_put_inline(req->send.rndv.mdesc);
+    if (reserve == 0) {
+        ucs_mpool_put_inline(req->send.rndv.mdesc);
+    } else {
+        ucp_rndv_mpool_put_with_reserve(req->send.rndv.mdesc);
+    }
+
     req->send.rndv.mdesc = NULL;
     ucp_proto_rndv_mtype_fc_reschedule_pending(req);
 }
