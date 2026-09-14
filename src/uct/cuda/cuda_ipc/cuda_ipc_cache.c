@@ -64,6 +64,7 @@ typedef struct uct_cuda_ipc_remote_cache {
     ucs_rw_spinlock_t           lock;
     unsigned long               max_regions; /**< Global max regions limit */
     size_t                      max_size;    /**< Global max total size limit */
+    unsigned                    md_refcount; /**< Number of open CUDA IPC MDs */
 } uct_cuda_ipc_remote_cache_t;
 
 uct_cuda_ipc_remote_cache_t uct_cuda_ipc_remote_cache;
@@ -159,41 +160,46 @@ static void uct_cuda_ipc_primary_ctx_pop_and_release(CUdevice cuda_device)
 static ucs_status_t
 uct_cuda_ipc_close_memhandle_legacy(uct_cuda_ipc_cache_region_t *region)
 {
-    ucs_status_t status;
-
-    status = uct_cuda_ipc_primary_ctx_retain_and_push(region->cu_dev);
-    if (status != UCS_OK) {
-        return status;
-    }
-
-    status = UCT_CUDADRV_FUNC_LOG_WARN(
+    return UCT_CUDADRV_FUNC_LOG_WARN(
             cuIpcCloseMemHandle((CUdeviceptr)region->mapped_addr));
-    uct_cuda_ipc_primary_ctx_pop_and_release(region->cu_dev);
-    return status;
 }
 
 static ucs_status_t uct_cuda_ipc_close_memhandle(uct_cuda_ipc_cache_region_t *region)
 {
     ucs_status_t status;
 
+    status = UCT_CUDADRV_FUNC_LOG_WARN(cuCtxPushCurrent(region->cuda_ctx));
+    if (status != UCS_OK) {
+        goto out_release_ctx;
+    }
+
     if ((region->key.ph.handle_type == UCT_CUDA_IPC_KEY_HANDLE_TYPE_VMM) ||
         (region->key.ph.handle_type == UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD)) {
         status = UCT_CUDADRV_FUNC_LOG_WARN(cuMemUnmap(
                     (CUdeviceptr)region->mapped_addr, region->key.b_len));
         if (status != UCS_OK) {
-            return status;
+            goto out_pop_ctx;
         }
 
-        return UCT_CUDADRV_FUNC_LOG_WARN(cuMemAddressFree(
+        status = UCT_CUDADRV_FUNC_LOG_WARN(cuMemAddressFree(
                 (CUdeviceptr)region->mapped_addr, region->key.b_len));
-    }
+        goto out_pop_ctx;
+    } else
 #if HAVE_CUDA_FABRIC
     if (region->key.ph.handle_type == UCT_CUDA_IPC_KEY_HANDLE_TYPE_MEMPOOL) {
-        return UCT_CUDADRV_FUNC_LOG_WARN(
+        status = UCT_CUDADRV_FUNC_LOG_WARN(
                 cuMemFree((CUdeviceptr)region->mapped_addr));
-    }
+    } else
 #endif
-    return uct_cuda_ipc_close_memhandle_legacy(region);
+    {
+        status = uct_cuda_ipc_close_memhandle_legacy(region);
+    }
+
+out_pop_ctx:
+    UCT_CUDADRV_FUNC_LOG_WARN(cuCtxPopCurrent(NULL));
+out_release_ctx:
+    UCT_CUDADRV_FUNC_LOG_WARN(cuDevicePrimaryCtxRelease(region->cu_dev));
+    return status;
 }
 
 static void
@@ -694,7 +700,10 @@ uct_cuda_ipc_cache_put_region(uct_cuda_ipc_cache_t *cache,
     uct_cuda_ipc_rkey_t *key = &ext_key->super;
     ucs_pgt_region_t *pgt_region;
     uct_cuda_ipc_cache_region_t *region;
+    uct_cuda_ipc_cache_region_t close_region;
+    CUcontext cuda_ctx;
     ucs_status_t status;
+    int cuda_ctx_retained = 0;
     int ret;
 
     pthread_rwlock_wrlock(&cache->lock);
@@ -729,6 +738,12 @@ uct_cuda_ipc_cache_put_region(uct_cuda_ipc_cache_t *cache,
         }
     }
 
+    status = uct_cuda_ctx_primary_retain(cu_dev, 1, &cuda_ctx);
+    if (status != UCS_OK) {
+        goto err;
+    }
+
+    cuda_ctx_retained = 1;
     status = uct_cuda_ipc_open_memhandle(ext_key, cu_dev,
                                          (CUdeviceptr*)mapped_addr, log_level);
     if (ucs_unlikely(status != UCS_OK)) {
@@ -773,6 +788,12 @@ uct_cuda_ipc_cache_put_region(uct_cuda_ipc_cache_t *cache,
     if (ret != 0) {
         ucs_warn("failed to allocate uct_cuda_ipc_cache region");
         status = UCS_ERR_NO_MEMORY;
+        close_region.key         = *key;
+        close_region.mapped_addr = *mapped_addr;
+        close_region.cu_dev      = cu_dev;
+        close_region.cuda_ctx    = cuda_ctx;
+        uct_cuda_ipc_close_memhandle(&close_region);
+        cuda_ctx_retained = 0;
         goto err;
     }
 
@@ -784,6 +805,7 @@ uct_cuda_ipc_cache_put_region(uct_cuda_ipc_cache_t *cache,
     region->mapped_addr = *mapped_addr;
     region->refcount    = 1;
     region->cu_dev      = cu_dev;
+    region->cuda_ctx    = cuda_ctx;
 
     status = UCS_PROFILE_CALL(ucs_pgtable_insert,
                               &cache->pgtable, &region->super);
@@ -800,6 +822,8 @@ uct_cuda_ipc_cache_put_region(uct_cuda_ipc_cache_t *cache,
         ucs_error("%s: failed to insert region:"UCS_PGT_REGION_FMT" size:%lu :%s",
                   cache->name, UCS_PGT_REGION_ARG(&region->super), key->b_len,
                   ucs_status_string(status));
+        uct_cuda_ipc_close_memhandle(region);
+        cuda_ctx_retained = 0;
         ucs_free(region);
         goto err;
     }
@@ -817,8 +841,13 @@ uct_cuda_ipc_cache_put_region(uct_cuda_ipc_cache_t *cache,
               cache->total_size, uct_cuda_ipc_remote_cache.max_size);
 
     status = UCS_OK;
+    cuda_ctx_retained = 0;
 
 err:
+    if (cuda_ctx_retained) {
+        UCT_CUDADRV_FUNC_LOG_WARN(cuDevicePrimaryCtxRelease(cu_dev));
+    }
+
     pthread_rwlock_unlock(&cache->lock);
     return status;
 }
@@ -921,10 +950,54 @@ void uct_cuda_ipc_destroy_cache(uct_cuda_ipc_cache_t *cache)
 void uct_cuda_ipc_cache_set_global_limits(unsigned long max_regions,
                                           size_t max_size)
 {
-    uct_cuda_ipc_remote_cache.max_regions = ucs_min(uct_cuda_ipc_remote_cache.max_regions, 
-                                                    max_regions);
-    uct_cuda_ipc_remote_cache.max_size    = ucs_min(uct_cuda_ipc_remote_cache.max_size,
-                                                    max_size);
+    uct_cuda_ipc_remote_cache.max_regions =
+            ucs_min(uct_cuda_ipc_remote_cache.max_regions, max_regions);
+    uct_cuda_ipc_remote_cache.max_size =
+            ucs_min(uct_cuda_ipc_remote_cache.max_size, max_size);
+}
+
+static void uct_cuda_ipc_cache_purge_global(void)
+{
+    uct_cuda_ipc_cache_t *rem_cache;
+#if HAVE_CUDA_FABRIC
+    CUmemoryPool mpool;
+#endif
+
+    kh_foreach_value(&uct_cuda_ipc_remote_cache.hash, rem_cache, {
+        uct_cuda_ipc_destroy_cache(rem_cache);
+    })
+    kh_clear(cuda_ipc_rem_cache, &uct_cuda_ipc_remote_cache.hash);
+
+#if HAVE_CUDA_FABRIC
+    pthread_rwlock_wrlock(&uct_cuda_ipc_rem_mpool_cache.lock);
+    kh_foreach_value(&uct_cuda_ipc_rem_mpool_cache.hash, mpool, {
+        UCT_CUDADRV_FUNC_LOG_WARN(cuMemPoolDestroy(mpool));
+    })
+    kh_clear(cuda_ipc_rem_mpool_cache,
+             &uct_cuda_ipc_rem_mpool_cache.hash);
+    pthread_rwlock_unlock(&uct_cuda_ipc_rem_mpool_cache.lock);
+#endif
+}
+
+void uct_cuda_ipc_cache_md_open(unsigned long max_regions, size_t max_size)
+{
+    ucs_rw_spinlock_write_lock(&uct_cuda_ipc_remote_cache.lock);
+    uct_cuda_ipc_remote_cache.md_refcount++;
+    uct_cuda_ipc_cache_set_global_limits(max_regions, max_size);
+    ucs_rw_spinlock_write_unlock(&uct_cuda_ipc_remote_cache.lock);
+}
+
+void uct_cuda_ipc_cache_md_close(void)
+{
+    ucs_rw_spinlock_write_lock(&uct_cuda_ipc_remote_cache.lock);
+    ucs_assert(uct_cuda_ipc_remote_cache.md_refcount > 0);
+    if (--uct_cuda_ipc_remote_cache.md_refcount == 0) {
+        uct_cuda_ipc_cache_purge_global();
+        uct_cuda_ipc_remote_cache.max_regions = ULONG_MAX;
+        uct_cuda_ipc_remote_cache.max_size    = SIZE_MAX;
+    }
+
+    ucs_rw_spinlock_write_unlock(&uct_cuda_ipc_remote_cache.lock);
 }
 
 UCS_STATIC_INIT {
@@ -932,6 +1005,7 @@ UCS_STATIC_INIT {
     kh_init_inplace(cuda_ipc_rem_cache, &uct_cuda_ipc_remote_cache.hash);
     uct_cuda_ipc_remote_cache.max_regions = ULONG_MAX;
     uct_cuda_ipc_remote_cache.max_size    = SIZE_MAX;
+    uct_cuda_ipc_remote_cache.md_refcount = 0;
 
 #if HAVE_CUDA_FABRIC
     pthread_rwlock_init(&uct_cuda_ipc_rem_mpool_cache.lock, NULL);
@@ -944,22 +1018,22 @@ UCS_STATIC_INIT {
 }
 
 UCS_STATIC_CLEANUP {
-    uct_cuda_ipc_cache_t *rem_cache;
+#if HAVE_CUDA_FABRIC
+    pthread_rwlock_wrlock(&uct_cuda_ipc_rem_mpool_cache.lock);
+#endif
+
+    ucs_rw_spinlock_write_lock(&uct_cuda_ipc_remote_cache.lock);
+    ucs_assert(uct_cuda_ipc_remote_cache.md_refcount == 0);
+    ucs_assert(kh_size(&uct_cuda_ipc_remote_cache.hash) == 0);
+    ucs_rw_spinlock_write_unlock(&uct_cuda_ipc_remote_cache.lock);
+    kh_destroy_inplace(cuda_ipc_rem_cache, &uct_cuda_ipc_remote_cache.hash);
+    ucs_rw_spinlock_cleanup(&uct_cuda_ipc_remote_cache.lock);
 
 #if HAVE_CUDA_FABRIC
-    CUmemoryPool mpool;
-
-    kh_foreach_value(&uct_cuda_ipc_rem_mpool_cache.hash, mpool, {
-        cuMemPoolDestroy(mpool);
-    });
+    ucs_assert(kh_size(&uct_cuda_ipc_rem_mpool_cache.hash) == 0);
+    pthread_rwlock_unlock(&uct_cuda_ipc_rem_mpool_cache.lock);
     kh_destroy_inplace(cuda_ipc_rem_mpool_cache,
                        &uct_cuda_ipc_rem_mpool_cache.hash);
     pthread_rwlock_destroy(&uct_cuda_ipc_rem_mpool_cache.lock);
 #endif
-
-    kh_foreach_value(&uct_cuda_ipc_remote_cache.hash, rem_cache, {
-        uct_cuda_ipc_destroy_cache(rem_cache);
-    })
-    kh_destroy_inplace(cuda_ipc_rem_cache, &uct_cuda_ipc_remote_cache.hash);
-    ucs_rw_spinlock_cleanup(&uct_cuda_ipc_remote_cache.lock);
 }

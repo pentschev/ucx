@@ -8,6 +8,7 @@
 
 #include <uct/base/uct_md.h>
 #include <uct/cuda/base/cuda_md.h>
+#include <uct/cuda/base/cuda_util.h>
 #include <cuda.h>
 
 
@@ -26,6 +27,8 @@ typedef enum {
 typedef struct uct_cuda_copy_md {
     struct uct_md                super;           /* Domain info */
     size_t                       granularity;     /* allocation granularity */
+    pthread_mutex_t              retained_ctx_lock;
+    CUcontext                    retained_ctx[UCT_CUDA_MAX_DEVICES];
     struct {
         ucs_on_off_auto_value_t  alloc_whole_reg; /* force return of allocation
                                                      range even for small bar
@@ -60,7 +63,6 @@ typedef struct uct_cuda_copy_alloc_handle {
     CUdeviceptr                 ptr;
     size_t                      length;
     CUcontext                   retained_ctx;
-    CUdevice                    retained_device;
     uint8_t                     is_vmm;
 #if HAVE_CUDA_FABRIC
     CUmemGenericAllocationHandle generic_handle;

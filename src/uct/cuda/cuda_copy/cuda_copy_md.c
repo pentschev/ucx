@@ -80,7 +80,9 @@ static ucs_config_field_t uct_cuda_copy_md_config_table[] = {
      UCS_CONFIG_TYPE_ENUM(ucs_memory_type_names)},
 
     {"RETAIN_PRIMARY_CTX", "n",
-     "Retain and use an inactive CUDA primary context for memory allocation",
+     "Retain and use inactive CUDA primary contexts for the lifetime of the\n"
+     "memory domain. This allows CUDA transports to remain usable between\n"
+     "internal staging-buffer allocations.",
      ucs_offsetof(uct_cuda_copy_md_config_t, retain_primary_ctx),
      UCS_CONFIG_TYPE_BOOL},
 
@@ -375,10 +377,9 @@ uct_cuda_copy_mem_alloc(uct_md_h uct_md, size_t *length_p, void **address_p,
         return UCS_ERR_NO_MEMORY;
     }
 
-    alloc_handle->length          = *length_p;
-    alloc_handle->retained_ctx    = NULL;
-    alloc_handle->retained_device = CU_DEVICE_INVALID;
-    alloc_handle->is_vmm          = 0;
+    alloc_handle->length       = *length_p;
+    alloc_handle->retained_ctx = NULL;
+    alloc_handle->is_vmm       = 0;
 
     status = uct_cuda_ctx_primary_push_avail(md->config.retain_primary_ctx,
                                              sys_dev, &cuda_device,
@@ -449,15 +450,26 @@ allocated:
 
     if ((cuda_device != avail_cuda_device) &&
         md->config.retain_primary_ctx) {
-        status = UCT_CUDADRV_FUNC(cuCtxGetCurrent(&alloc_handle->retained_ctx),
-                                  log_level);
+        CUcontext retained_ctx;
+
+        status = UCT_CUDADRV_FUNC(cuCtxGetCurrent(&retained_ctx), log_level);
         if (status != UCS_OK) {
             (void)uct_md_mem_free(uct_md, alloc_handle);
             goto out;
         }
 
-        alloc_handle->retained_device = avail_cuda_device;
-        primary_ctx_retained          = 1;
+        ucs_assert((avail_cuda_device >= 0) &&
+                   (avail_cuda_device < UCT_CUDA_MAX_DEVICES));
+        pthread_mutex_lock(&md->retained_ctx_lock);
+        if (md->retained_ctx[avail_cuda_device] == NULL) {
+            md->retained_ctx[avail_cuda_device] = retained_ctx;
+            primary_ctx_retained                = 1;
+        } else {
+            ucs_assert(md->retained_ctx[avail_cuda_device] == retained_ctx);
+        }
+
+        alloc_handle->retained_ctx = md->retained_ctx[avail_cuda_device];
+        pthread_mutex_unlock(&md->retained_ctx_lock);
     }
 
     *memh_p    = alloc_handle;
@@ -581,19 +593,24 @@ static ucs_status_t uct_cuda_copy_mem_free(uct_md_h md, uct_mem_h memh)
     }
 
 out_release_ctx:
-    if (alloc_handle->retained_ctx != NULL) {
-        UCT_CUDADRV_FUNC_LOG_WARN(
-                cuDevicePrimaryCtxRelease(alloc_handle->retained_device));
-    }
-
     ucs_free(alloc_handle);
     return status;
 }
 
 
-static void uct_cuda_copy_md_close(uct_md_h uct_md) {
+static void uct_cuda_copy_md_close(uct_md_h uct_md)
+{
     uct_cuda_copy_md_t *md = ucs_derived_of(uct_md, uct_cuda_copy_md_t);
+    CUdevice cuda_device;
 
+    for (cuda_device = 0; cuda_device < UCT_CUDA_MAX_DEVICES; ++cuda_device) {
+        if (md->retained_ctx[cuda_device] != NULL) {
+            UCT_CUDADRV_FUNC_LOG_WARN(
+                    cuDevicePrimaryCtxRelease(cuda_device));
+        }
+    }
+
+    pthread_mutex_destroy(&md->retained_ctx_lock);
     ucs_free(md);
 }
 
@@ -1160,13 +1177,21 @@ uct_cuda_copy_md_open(uct_component_t *component, const char *md_name,
                                                        uct_cuda_copy_md_config_t);
     uct_cuda_copy_md_t *md;
     int dmabuf_supported;
+    int ret;
     ucs_status_t status;
 
-    md = ucs_malloc(sizeof(uct_cuda_copy_md_t), "uct_cuda_copy_md_t");
+    md = ucs_calloc(1, sizeof(*md), "uct_cuda_copy_md_t");
     if (NULL == md) {
         ucs_error("failed to allocate memory for uct_cuda_copy_md_t");
         status = UCS_ERR_NO_MEMORY;
         goto err;
+    }
+
+    ret = pthread_mutex_init(&md->retained_ctx_lock, NULL);
+    if (ret != 0) {
+        ucs_error("pthread_mutex_init() failed: %m");
+        status = UCS_ERR_IO_ERROR;
+        goto err_free_md;
     }
 
     md->super.ops                 = &md_ops;
@@ -1193,7 +1218,7 @@ uct_cuda_copy_md_open(uct_component_t *component, const char *md_name,
     if ((config->enable_dmabuf == UCS_YES) && !dmabuf_supported) {
         ucs_error("dmabuf support requested but not found");
         status = UCS_ERR_UNSUPPORTED;
-        goto err_free_md;
+        goto err_destroy_lock;
     }
 
     if (config->enable_dmabuf != UCS_NO) {
@@ -1214,6 +1239,8 @@ uct_cuda_copy_md_open(uct_component_t *component, const char *md_name,
 
     return UCS_OK;
 
+err_destroy_lock:
+    pthread_mutex_destroy(&md->retained_ctx_lock);
 err_free_md:
     ucs_free(md);
 err:

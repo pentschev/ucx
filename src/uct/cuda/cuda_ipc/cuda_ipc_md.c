@@ -762,6 +762,7 @@ out:
 
 static void uct_cuda_ipc_md_close(uct_md_h md)
 {
+    uct_cuda_ipc_cache_md_close();
     ucs_free(md);
 }
 
@@ -865,8 +866,8 @@ uct_cuda_ipc_md_open(uct_component_t *component, const char *md_name,
                                                   md, ipc_config->enable_mnnvl);
     md->fabric_supported = uct_cuda_ipc_md_check_fabric_support();
 
-    uct_cuda_ipc_cache_set_global_limits(ipc_config->cache_max_regions,
-                                         ipc_config->cache_max_size);
+    uct_cuda_ipc_cache_md_open(ipc_config->cache_max_regions,
+                               ipc_config->cache_max_size);
 
     *md_p                 = &md->super;
 

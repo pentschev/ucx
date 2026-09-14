@@ -471,7 +471,7 @@ For same-node testing, start the server with:
 ```sh
 UCX_TLS=rc,cuda_copy,cuda_ipc \
 UCX_PROTO_ENABLE=y \
-UCX_PROTO_INFO=y \
+UCX_PROTO_INFO=used \
 UCX_RNDV_THRESH=0 \
 UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
 UCX_RNDV_FRAG_MEM_TYPES=cuda \
@@ -486,7 +486,7 @@ hostname:
 ```sh
 UCX_TLS=rc,cuda_copy,cuda_ipc \
 UCX_PROTO_ENABLE=y \
-UCX_PROTO_INFO=y \
+UCX_PROTO_INFO=used \
 UCX_RNDV_THRESH=0 \
 UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
 UCX_RNDV_FRAG_MEM_TYPES=cuda \
@@ -499,17 +499,28 @@ Replace `SERVER_HOSTNAME` with the server hostname.
 
 Use `-m host,cuda` and `-m cuda,host` to exercise the asymmetric directions.
 `UCX_CUDA_COPY_RETAIN_PRIMARY_CTX=y` is needed for host-only processes such as
-this `ucx_perftest` invocation, because they do not otherwise create a CUDA
-context for staging-buffer allocation.
-`UCX_PROTO_INFO=y` must show both `frag cuda` and `cuda_ipc`; otherwise UCX
-selected the documented fallback.
+this `ucx_perftest` invocation. It keeps the staging device's primary context
+active for the lifetime of the CUDA copy memory domain so CUDA IPC remains
+reachable between staging-buffer allocations.
+`UCX_PROTO_INFO=used` must show both `frag cuda` and `cuda_ipc`; otherwise UCX
+selected the documented fallback. With a statistics-enabled build, transport
+use can also be verified by adding:
+
+```sh
+UCX_STATS_DEST=stdout \
+UCX_STATS_FILTER=bytes_zcopy,rx_am_bytes \
+```
+
+The bulk-transfer `bytes_zcopy` counter must be nonzero for `cuda_ipc` and
+zero for the configured network transport (for example, `rc` or `tcp`). The
+network transport may still report a small amount of control traffic.
 
 For cross-node MNNVL testing, enable CUDA IPC MNNVL support on both peers:
 
 ```sh
 UCX_TLS=rc,cuda_copy,cuda_ipc \
 UCX_PROTO_ENABLE=y \
-UCX_PROTO_INFO=y \
+UCX_PROTO_INFO=used \
 UCX_RNDV_THRESH=0 \
 UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
 UCX_RNDV_FRAG_MEM_TYPES=cuda \
@@ -525,7 +536,7 @@ hostname:
 ```sh
 UCX_TLS=rc,cuda_copy,cuda_ipc \
 UCX_PROTO_ENABLE=y \
-UCX_PROTO_INFO=y \
+UCX_PROTO_INFO=used \
 UCX_RNDV_THRESH=0 \
 UCX_RNDV_PIPELINE_HOST_CUDA_STAGING_FORCE=y \
 UCX_RNDV_FRAG_MEM_TYPES=cuda \

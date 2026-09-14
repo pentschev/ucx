@@ -30,6 +30,7 @@ struct uct_cuda_ipc_cache_region {
     void                    *mapped_addr; /**< Local mapped address */
     uint64_t                refcount;     /**< Track in-flight ops before unmapping*/
     CUdevice                cu_dev;       /**< CUDA device */
+    CUcontext               cuda_ctx;     /**< Context owning the mapping */
 };
 
 
@@ -83,5 +84,17 @@ void uct_cuda_ipc_unmap_memhandle(pid_t pid, ucs_sys_ns_t pid_ns,
  */
 void uct_cuda_ipc_cache_set_global_limits(unsigned long max_regions,
                                           size_t max_size);
+
+
+/**
+ * @brief Register/unregister a CUDA IPC MD with the global remote cache.
+ *
+ * The last MD to close destroys all cached CUDA mappings while CUDA is still
+ * available.
+ */
+void uct_cuda_ipc_cache_md_open(unsigned long max_regions, size_t max_size);
+
+
+void uct_cuda_ipc_cache_md_close(void);
 
 #endif

@@ -38,6 +38,9 @@ int main(int argc, char **argv)
     CUdevice cuda_device;
     size_t total_device_mem;
     int cuda_device_ordinal;
+    unsigned int primary_ctx_flags;
+    int primary_ctx_active;
+    int cuda_device_initialized = 0;
 
     if (setenv("UCX_CUDA_COPY_RETAIN_PRIMARY_CTX", "y", 1) != 0) {
         printf("setenv failed\n");
@@ -78,6 +81,7 @@ int main(int argc, char **argv)
          CUDA_SUCCESS)) {
         goto cleanup;
     }
+    cuda_device_initialized = 1;
 
     mmap_params.length = total_device_mem + 1;
     status             = ucp_mem_map(ucp_context, &mmap_params, &memh);
@@ -120,7 +124,6 @@ int main(int argc, char **argv)
         goto unmap;
     }
 
-    printf("SUCCESS\n");
     ret = EXIT_SUCCESS;
 
 unmap:
@@ -132,11 +135,32 @@ unmap:
 
     if ((CUDA_CALL(cuCtxGetCurrent(&cu_context)) != CUDA_SUCCESS) ||
         (cu_context != NULL)) {
-        printf("failed: CUDA context leaked after unmap\n");
+        printf("failed: CUDA context left current after unmap\n");
+        ret = -EXIT_FAILURE;
+    }
+
+    if ((CUDA_CALL(cuDevicePrimaryCtxGetState(cuda_device,
+                                              &primary_ctx_flags,
+                                              &primary_ctx_active)) !=
+         CUDA_SUCCESS) || !primary_ctx_active) {
+        printf("failed: CUDA primary context is inactive after unmap\n");
         ret = -EXIT_FAILURE;
     }
 cleanup:
     ucp_cleanup(ucp_context);
+
+    if (cuda_device_initialized &&
+        ((CUDA_CALL(cuDevicePrimaryCtxGetState(cuda_device,
+                                               &primary_ctx_flags,
+                                               &primary_ctx_active)) !=
+          CUDA_SUCCESS) || primary_ctx_active)) {
+        printf("failed: CUDA primary context is active after cleanup\n");
+        ret = -EXIT_FAILURE;
+    }
 out:
+    if (ret == EXIT_SUCCESS) {
+        printf("SUCCESS\n");
+    }
+
     return ret;
 }
