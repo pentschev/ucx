@@ -9,6 +9,9 @@
 
 ## Current
 ### Features:
+#### UCP
+ * Added an opt-in tag rendezvous policy to stage host transfers through CUDA
+   fragments and CUDA IPC, including MNNVL-capable systems.
 #### RDMA CORE (IB, ROCE, etc.)
  * UCX_IB_PCI_RELAXED_ORDERING=yes now requires all memory keys to use relaxed ordering and omits strict-order companion keys; the former "only" value is removed
 ### Bugfixes:
